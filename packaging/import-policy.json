@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "package": "rcm",
+  "source_root": "src/rcm",
+  "stdlib_only": false,
+  "allowed_import_roots": [
+    "PIL",
+    "cffi",
+    "clr",
+    "clr_loader",
+    "psutil",
+    "pystray",
+    "pythonnet",
+    "requests",
+    "rcm"
+  ],
+  "forbidden_dynamic_import_calls": [
+    "__import__"
+  ],
+  "allowed_dynamic_import_calls": [
+    {
+      "path": "src/rcm/bootstrap.py",
+      "call": "importlib.import_module",
+      "count": 1
+    },
+    {
+      "path": "src/rcm/foundation_check.py",
+      "call": "importlib.import_module",
+      "count": 1
+    }
+  ]
+}

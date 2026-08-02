@@ -1,0 +1,516 @@
+{
+  "schema": "rcm-pr07-legacy-compat-relocation-v1",
+  "destination_path": "src/rcm/legacy_compat.py",
+  "position_independent_projection": {
+    "row_format": "id|node_type|anchor_raw|anchor_behavior|syntax_raw|syntax_behavior|anchor_source_sha|syntax_source_sha|ast_sha",
+    "rows": 27,
+    "bytes": 6624,
+    "sha256": "E30848913E3FDB9A6EF4A475E5ED14742584AE35B2D9AFE90774FA994A188D95",
+    "ast_projection_sha256": "BF0741C60F6DC0D7F3CF6508279FE58D98724CCD51E9C4C88D56113235C81CC0",
+    "source_projection_sha256": "CB458B11CACE59701EB4CBAF8AEFFE8D502EAB58204066A2C0625ACA12A3190A"
+  },
+  "ownership_budget": {
+    "r_behavior_lines": 717,
+    "w_behavior_lines": 18,
+    "k_behavior_lines": 735,
+    "u_behavior_lines": 0,
+    "w_hard_cap": 33,
+    "k_hard_cap": 750
+  },
+  "selectors": [
+    {
+      "baseline_id": "module.current_binary_path",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module.current_binary_path"
+    },
+    {
+      "baseline_id": "module.file_sha256",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module.file_sha256"
+    },
+    {
+      "baseline_id": "module.save_config",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module.save_config"
+    },
+    {
+      "baseline_id": "module._norm_file_path",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module._norm_file_path"
+    },
+    {
+      "baseline_id": "module._is_real_sha",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module._is_real_sha"
+    },
+    {
+      "baseline_id": "module._replacement_targets_from_processes",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module._replacement_targets_from_processes"
+    },
+    {
+      "baseline_id": "module.needs_rcm_control_server",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module.needs_rcm_control_server"
+    },
+    {
+      "baseline_id": "module.ActionResult",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "module.ActionResult"
+    },
+    {
+      "baseline_id": "RayApp._set_repair_status",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._set_repair_status"
+    },
+    {
+      "baseline_id": "RayApp._repair_status_snapshot",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._repair_status_snapshot"
+    },
+    {
+      "baseline_id": "RayApp._ray_firewall_ready",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._ray_firewall_ready"
+    },
+    {
+      "baseline_id": "RayApp._health_snapshot",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._health_snapshot"
+    },
+    {
+      "baseline_id": "RayApp._handle_self_update",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._handle_self_update"
+    },
+    {
+      "baseline_id": "RayApp._launch_self_update_helper",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._launch_self_update_helper"
+    },
+    {
+      "baseline_id": "RayApp._perform_self_update",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._perform_self_update"
+    },
+    {
+      "baseline_id": "RayApp._handle_cluster_config",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._handle_cluster_config"
+    },
+    {
+      "baseline_id": "RayApp._record_cluster_event",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._record_cluster_event"
+    },
+    {
+      "baseline_id": "RayApp._schedule_cluster_convergence",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._schedule_cluster_convergence"
+    },
+    {
+      "baseline_id": "RayApp._converge_to_cluster_config",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._converge_to_cluster_config"
+    },
+    {
+      "baseline_id": "RayApp._apply_cluster_config_runtime",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._apply_cluster_config_runtime"
+    },
+    {
+      "baseline_id": "RayApp._repair_local_ray",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._repair_local_ray"
+    },
+    {
+      "baseline_id": "RayApp._request_remote_repair",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._request_remote_repair"
+    },
+    {
+      "baseline_id": "RayApp._repair_cluster",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._repair_cluster"
+    },
+    {
+      "baseline_id": "RayApp._run_repair_flow",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._run_repair_flow"
+    },
+    {
+      "baseline_id": "RayApp._remote_repair_request",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._remote_repair_request"
+    },
+    {
+      "baseline_id": "RayApp._do_repair",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._do_repair"
+    },
+    {
+      "baseline_id": "RayApp._do_fleet_update",
+      "destination_path": "src/rcm/legacy_compat.py",
+      "output_qualified_symbol": "LegacyRayAppMixin._do_fleet_update"
+    }
+  ],
+  "w_ledger": [
+    {
+      "path": "ray_monitor.py",
+      "line": 89,
+      "kind": "import",
+      "source": "from src.rcm.legacy_compat import ActionResult, LegacyRayAppMixin, _is_real_sha, _norm_file_path, _replacement_targets_from_processes, bind_legacy_globals, current_binary_path, file_sha256, needs_rcm_control_server, save_config",
+      "referenced_baseline_ids": [
+        "module.current_binary_path",
+        "module.file_sha256",
+        "module.save_config",
+        "module._norm_file_path",
+        "module._is_real_sha",
+        "module._replacement_targets_from_processes",
+        "module.needs_rcm_control_server",
+        "module.ActionResult",
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "ray_monitor.py",
+      "line": 5831,
+      "kind": "inheritance",
+      "source": "class RayApp(LegacyRayAppMixin, tk.Tk):",
+      "referenced_baseline_ids": [
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "ray_monitor.py",
+      "line": 9748,
+      "kind": "namespace-composition",
+      "source": "bind_legacy_globals(globals())",
+      "referenced_baseline_ids": [
+        "module.current_binary_path",
+        "module.file_sha256",
+        "module.save_config",
+        "module._norm_file_path",
+        "module._is_real_sha",
+        "module._replacement_targets_from_processes",
+        "module.needs_rcm_control_server",
+        "module.ActionResult",
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 2,
+      "kind": "future-import",
+      "source": "from __future__ import annotations",
+      "referenced_baseline_ids": [
+        "module.current_binary_path",
+        "module.file_sha256",
+        "module.save_config",
+        "module._norm_file_path",
+        "module._is_real_sha",
+        "module._replacement_targets_from_processes",
+        "module.needs_rcm_control_server",
+        "module.ActionResult",
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 4,
+      "kind": "import",
+      "source": "from dataclasses import dataclass",
+      "referenced_baseline_ids": [
+        "module.ActionResult"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 7,
+      "kind": "namespace-allowlist",
+      "source": "_LEGACY_GLOBAL_NAMES = (\"__file__\", \"os\", \"sys\", \"hashlib\", \"normalize_controller_config\", \"CONFIG_PATH\", \"json\", \"threading\", \"_process_image_path\", \"_rcm_process_pids_checked\", \"time\", \"CREATE_NO_WINDOW\", \"_IS_WIN\", \"subprocess\", \"socket\", \"DEFAULT_OFFICIAL_EXE_PATH\", \"re\", \"config_dir\", \"resource_path\", \"_release_single_instance\", \"shutil\", \"DEFAULT_CLUSTER_MANIFEST_PATH\", \"validate_cluster_manifest\", \"write_cluster_manifest\", \"TROUBLE_LOG_PATH\", \"_append_log_record\", \"resolve_identity\", \"is_controller_config\", \"tk\", \"_dashboard_ip_alive\", \"requests\", \"_dashboard_alive_ips\", \"is_controller_node\", \"messagebox\", \"OperationProgressDialog\")",
+      "referenced_baseline_ids": [
+        "module.current_binary_path",
+        "module.file_sha256",
+        "module.save_config",
+        "module._norm_file_path",
+        "module._is_real_sha",
+        "module._replacement_targets_from_processes",
+        "module.needs_rcm_control_server",
+        "module.ActionResult",
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 10,
+      "kind": "namespace-binding-definition",
+      "source": "def bind_legacy_globals(namespace):",
+      "referenced_baseline_ids": [
+        "module.current_binary_path",
+        "module.file_sha256",
+        "module.save_config",
+        "module._norm_file_path",
+        "module._is_real_sha",
+        "module._replacement_targets_from_processes",
+        "module.needs_rcm_control_server",
+        "module.ActionResult",
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 11,
+      "kind": "namespace-binding",
+      "source": "    globals().update({name: namespace[name] for name in _LEGACY_GLOBAL_NAMES})",
+      "referenced_baseline_ids": [
+        "module.current_binary_path",
+        "module.file_sha256",
+        "module.save_config",
+        "module._norm_file_path",
+        "module._is_real_sha",
+        "module._replacement_targets_from_processes",
+        "module.needs_rcm_control_server",
+        "module.ActionResult",
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 12,
+      "kind": "dynamic-global-proxy",
+      "source": "    globals()[\"OperationProgressDialog\"] = lambda *args, **kwargs: namespace[\"OperationProgressDialog\"](*args, **kwargs)",
+      "referenced_baseline_ids": [
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 13,
+      "kind": "dynamic-global-proxy",
+      "source": "    globals()[\"file_sha256\"] = lambda *args, **kwargs: namespace[\"file_sha256\"](*args, **kwargs)",
+      "referenced_baseline_ids": [
+        "module.file_sha256",
+        "module._replacement_targets_from_processes",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 14,
+      "kind": "dynamic-save-proxy",
+      "source": "    globals()[\"save_config\"] = lambda *args, **kwargs: _save_config_with_namespace(namespace, *args, **kwargs)",
+      "referenced_baseline_ids": [
+        "module.save_config",
+        "RayApp._handle_cluster_config"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 15,
+      "kind": "namespace-export",
+      "source": "    namespace[\"save_config\"] = globals()[\"save_config\"]",
+      "referenced_baseline_ids": [
+        "module.save_config"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 138,
+      "kind": "decorator",
+      "source": "@dataclass",
+      "referenced_baseline_ids": [
+        "module.ActionResult"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 144,
+      "kind": "inheritance-container",
+      "source": "class LegacyRayAppMixin:",
+      "referenced_baseline_ids": [
+        "RayApp._set_repair_status",
+        "RayApp._repair_status_snapshot",
+        "RayApp._ray_firewall_ready",
+        "RayApp._health_snapshot",
+        "RayApp._handle_self_update",
+        "RayApp._launch_self_update_helper",
+        "RayApp._perform_self_update",
+        "RayApp._handle_cluster_config",
+        "RayApp._record_cluster_event",
+        "RayApp._schedule_cluster_convergence",
+        "RayApp._converge_to_cluster_config",
+        "RayApp._apply_cluster_config_runtime",
+        "RayApp._repair_local_ray",
+        "RayApp._request_remote_repair",
+        "RayApp._repair_cluster",
+        "RayApp._run_repair_flow",
+        "RayApp._remote_repair_request",
+        "RayApp._do_repair",
+        "RayApp._do_fleet_update"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 810,
+      "kind": "saved-target",
+      "source": "_LEGACY_SAVE_CONFIG = save_config",
+      "referenced_baseline_ids": [
+        "module.save_config"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 813,
+      "kind": "namespace-save-wrapper-definition",
+      "source": "def _save_config_with_namespace(namespace, *args, **kwargs):",
+      "referenced_baseline_ids": [
+        "module.save_config"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 814,
+      "kind": "live-path-binding",
+      "source": "    globals()[\"CONFIG_PATH\"] = namespace[\"CONFIG_PATH\"]",
+      "referenced_baseline_ids": [
+        "module.save_config"
+      ]
+    },
+    {
+      "path": "src/rcm/legacy_compat.py",
+      "line": 815,
+      "kind": "live-save-dispatch",
+      "source": "    return _LEGACY_SAVE_CONFIG(*args, **kwargs)",
+      "referenced_baseline_ids": [
+        "module.save_config"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 15,
+  "head_ip": "192.0.2.10",
+  "head_port": 6379,
+  "dashboard_port": 8265,
+  "ray_exe": "auto",
+  "this": {
+    "role": "auto",
+    "mode": "auto",
+    "ip": "auto",
+    "num_cpus": "auto"
+  },
+  "nodes": [
+    {
+      "name": "example-head",
+      "ip": "192.0.2.10",
+      "mode": "ray",
+      "role": "head",
+      "num_cpus": 8,
+      "rdp_user": ""
+    },
+    {
+      "name": "example-worker",
+      "ip": "192.0.2.11",
+      "mode": "ray",
+      "role": "worker",
+      "num_cpus": 4,
+      "rdp_user": "EXAMPLE\\operator"
+    }
+  ],
+  "credential_controller_ips": [
+    "192.0.2.10"
+  ],
+  "update_controller_ips": [
+    "192.0.2.10"
+  ],
+  "cluster_controller_ips": [
+    "192.0.2.10"
+  ],
+  "official_exe_path": "",
+  "cluster_manifest_path": "",
+  "cluster_epoch": 0
+}

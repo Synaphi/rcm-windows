@@ -1,0 +1,50 @@
+{
+  "schema_version": 4,
+  "package": "rcm",
+  "source_root": "src/rcm",
+  "release": {
+    "channel": "preview",
+    "package_version": "2.2026.8.2a1",
+    "display_version": "2.08.02a",
+    "release_id": "rcm-2-2026-08-02-a",
+    "tag": "v2.2026.08.02a",
+    "sequence": 2026080201,
+    "asset": "RCM-2.2026.08.02a-windows-x64.exe",
+    "windows_version": "2.2026.802.1",
+    "windows_tuple": [
+      2,
+      2026,
+      802,
+      1
+    ],
+    "architecture": "x86_64",
+    "prerelease": true,
+    "authenticode": false
+  },
+  "allowed_data_files": [
+    "src/rcm/resources/help.json"
+  ],
+  "required_notice_files": [
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "candidate": {
+    "state": "not_built",
+    "file": null,
+    "size": null,
+    "sha256": null,
+    "public_source_snapshot_sha256": null,
+    "package_manifest_sha256": null,
+    "local_admin_elevation_enabled": false,
+    "verification": {
+      "visible_quit_cycles": 50,
+      "hidden_show_quit_cycles": 25,
+      "minimized_show_quit_cycles": 25,
+      "passed_cycles": null,
+      "evidence_sha256": null
+    },
+    "blockers": [
+      "candidate_not_built",
+      "packaged_lifecycle_not_run"
+    ]
+  }
+}

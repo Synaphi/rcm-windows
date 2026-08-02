@@ -1,0 +1,30 @@
+{
+  "title": "Ray Cluster Manager Help",
+  "sections": [
+    {
+      "id": "overview",
+      "title": "Overview",
+      "body": "Use the main window to review local cluster status and open focused tools."
+    },
+    {
+      "id": "nodes",
+      "title": "Nodes",
+      "body": "Add or edit typed node records in Settings. Changes are validated before saving."
+    },
+    {
+      "id": "rdp",
+      "title": "Remote Desktop",
+      "body": "Remote Desktop uses an opaque stored credential reference. This application never asks for or displays a remote password."
+    },
+    {
+      "id": "cleanup",
+      "title": "Cleanup",
+      "body": "Cleanup acts only on locally scanned, identity-bound candidates. Review the selection before applying it."
+    },
+    {
+      "id": "exit",
+      "title": "Hide and exit",
+      "body": "Closing the main window hides it. Use Show to restore it or Quit for bounded graceful shutdown."
+    }
+  ]
+}

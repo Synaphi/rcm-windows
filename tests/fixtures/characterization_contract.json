@@ -1,0 +1,448 @@
+{
+  "schema_version": 1,
+  "baseline": "frozen-sanitized-1.x",
+  "snapshot_sha256": "e0db5a43968e56fbe22695fb96f5329213aa241d160e838eebaa3a24ec1e5db9",
+  "contracts": {
+    "config_migration": {
+      "credential_controller_ips": [
+        "192.0.2.25",
+        "192.0.2.10"
+      ],
+      "input_schema": 12,
+      "legacy_nodes": [
+        {
+          "ip": "192.0.2.25",
+          "mode": "ray",
+          "name": "SYNTHETIC_NODE_LEGACY",
+          "num_cpus": 4,
+          "rdp_user": "",
+          "role": "worker"
+        }
+      ],
+      "on_close": "tray",
+      "output_schema": 15,
+      "persisted_matches_runtime": true,
+      "poll_interval": 1.5,
+      "this": {
+        "ip": "192.0.2.25",
+        "mode": "ray",
+        "num_cpus": 4,
+        "role": "worker"
+      }
+    },
+    "endpoints": {
+      "health": {
+        "capabilities": {
+          "cluster_config_v1": true,
+          "rdp_password_change_v1": false,
+          "repair": true,
+          "self_update_v1": true
+        },
+        "keys": [
+          "binary",
+          "build_date",
+          "build_tag",
+          "cluster_config_v1",
+          "cluster_epoch",
+          "host",
+          "ok",
+          "pid",
+          "rdp_password_change_v1",
+          "repair",
+          "self_update_v1",
+          "sha256",
+          "version"
+        ],
+        "status": 200,
+        "types": {
+          "binary": "str",
+          "build_date": "str",
+          "build_tag": "str",
+          "cluster_config_v1": "bool",
+          "cluster_epoch": "int",
+          "host": "str",
+          "ok": "bool",
+          "pid": "int",
+          "rdp_password_change_v1": "bool",
+          "repair": "bool",
+          "self_update_v1": "bool",
+          "sha256": "str",
+          "version": "str"
+        }
+      },
+      "metrics": {
+        "keys": [
+          "cpu_max",
+          "cpu_pkg",
+          "disks",
+          "error",
+          "gpu",
+          "metrics_age_sec",
+          "os_cpu_pct",
+          "ram_total_gb",
+          "ts"
+        ],
+        "sample": {
+          "cpu_max": 58.0,
+          "cpu_pkg": 55.0,
+          "disks": [
+            {
+              "drive": "C:",
+              "pct": 41.0,
+              "present": true
+            }
+          ],
+          "error": "",
+          "gpu": null,
+          "metrics_age_sec": 0.25,
+          "os_cpu_pct": 12.5,
+          "ram_total_gb": 32.0,
+          "ts": 123.0
+        },
+        "types": {
+          "cpu_max": "float",
+          "cpu_pkg": "float",
+          "disks": "list",
+          "error": "str",
+          "gpu": "null",
+          "metrics_age_sec": "float",
+          "os_cpu_pct": "float",
+          "ram_total_gb": "float",
+          "ts": "float"
+        }
+      }
+    },
+    "ray_commands": {
+      "join_worker": {
+        "message": "Worker connecting...",
+        "ok": true,
+        "popen_args": [
+          "ray.exe",
+          "start",
+          "--address",
+          "192.0.2.10:6379",
+          "--node-ip-address",
+          "192.0.2.20",
+          "--num-cpus",
+          "4",
+          "--temp-dir",
+          "<SANDBOX>/Temp/ray",
+          "--node-manager-port",
+          "6380",
+          "--object-manager-port",
+          "6381",
+          "--runtime-env-agent-port",
+          "6382",
+          "--dashboard-agent-grpc-port",
+          "6383",
+          "--dashboard-agent-listen-port",
+          "6384",
+          "--metrics-export-port",
+          "6385",
+          "--min-worker-port",
+          "10002",
+          "--max-worker-port",
+          "10100",
+          "--node-name",
+          "SYNTHETIC_WORKER",
+          "--block"
+        ],
+        "preflight_calls": [
+          {
+            "args": [
+              "stop"
+            ],
+            "timeout": 30
+          }
+        ]
+      },
+      "start_head": {
+        "calls": [
+          {
+            "args": [
+              "stop"
+            ],
+            "timeout": 30
+          },
+          {
+            "args": [
+              "start",
+              "--head",
+              "--node-ip-address",
+              "192.0.2.10",
+              "--port",
+              "6379",
+              "--dashboard-host",
+              "0.0.0.0",
+              "--num-cpus",
+              "8"
+            ],
+            "timeout": 90
+          }
+        ],
+        "message": "Head started.",
+        "ok": true
+      },
+      "stop": {
+        "calls": [
+          {
+            "args": [
+              "stop"
+            ],
+            "timeout": 45
+          }
+        ],
+        "message": "stopped",
+        "ok": true
+      }
+    },
+    "rdp": {
+      "file_lines": [
+        "screen mode id:i:2",
+        "use multimon:i:0",
+        "desktopwidth:i:1280",
+        "desktopheight:i:720",
+        "session bpp:i:32",
+        "full address:s:192.0.2.44:3390",
+        "prompt for credentials:i:1",
+        "authentication level:i:2",
+        "enablecredsspsupport:i:1",
+        "username:s:SYNTHETIC\\operator"
+      ],
+      "file_name": "rdp_192_0_2_44.rdp",
+      "ipv4_target": "192.0.2.44:3390",
+      "ipv6_target": "[2001:db8::44]:3390",
+      "launch_args": [
+        "mstsc.exe",
+        "rdp_192_0_2_44.rdp"
+      ]
+    },
+    "cleanup": {
+      "active_connection": false,
+      "classification": "Recommended",
+      "member_pids": [
+        41001
+      ],
+      "preflight": {
+        "ended_pids": [],
+        "message": "scan result is stale; rescan required",
+        "remaining_pids": [],
+        "status": "Skipped"
+      },
+      "reasons": [
+        "parent process is gone",
+        "Vite development server",
+        "running at least 24 hours",
+        "sustained CPU impact",
+        "memory footprint",
+        "no visible window"
+      ],
+      "score": 88
+    },
+    "update_order": {
+      "request_ip_order": [
+        "192.0.2.20",
+        "192.0.2.30",
+        "192.0.2.10"
+      ],
+      "request_name_order": [
+        "SYNTHETIC_WORKER_A",
+        "SYNTHETIC_WORKER_B",
+        "SYNTHETIC_HEAD"
+      ],
+      "roles_in_order": [
+        "worker",
+        "worker",
+        "head"
+      ]
+    },
+    "singleton_shutdown": {
+      "duplicate": {
+        "acquired": false,
+        "closed_handles": [
+          101
+        ],
+        "stored_handle": null
+      },
+      "shutdown": {
+        "requested": true,
+        "start_after_request": {
+          "message": "shutdown in progress; start cancelled",
+          "ok": false
+        },
+        "stop_for_quit": {
+          "message": "stopped",
+          "ok": true
+        }
+      },
+      "unique": {
+        "acquired": true,
+        "closed_handles": [
+          101
+        ],
+        "handle_after_acquire": 101,
+        "handle_after_release": null
+      }
+    },
+    "ui_geometry_dpi": {
+      "fit_scale": {
+        "120": 1.667,
+        "144": 2.0,
+        "192": 2.667,
+        "96": 1.333
+      },
+      "fit_width": {
+        "floor_1920": 1120,
+        "scale_2_4k": 1680,
+        "scale_3_narrow": 760
+      },
+      "geometries": {
+        "clamped": {
+          "desired_height": 1280,
+          "desired_width": 2238,
+          "height": 728,
+          "horizontal_scroll": true,
+          "vertical_scroll": true,
+          "visible_rows": 51,
+          "width": 1366,
+          "x": 1920,
+          "y": -200
+        },
+        "compact": {
+          "desired_height": 430,
+          "desired_width": 816,
+          "height": 430,
+          "horizontal_scroll": false,
+          "vertical_scroll": false,
+          "visible_rows": 6,
+          "width": 816,
+          "x": 30,
+          "y": 40
+        }
+      }
+    },
+    "safety": {
+      "audit_blocks": [],
+      "live_rcm_ray_fleet_access": 0,
+      "production_source_mutations": 0,
+      "sandbox": "<PARENT_OWNED_TEMP>"
+    }
+  },
+  "legacy_suite_inventory": [
+    {
+      "path": "test_cluster_reconfig.py",
+      "test_functions": 9,
+      "execution_class": "isolated-loopback"
+    },
+    {
+      "path": "test_controller_mode.py",
+      "test_functions": 13,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_dpi_scaling.py",
+      "test_functions": 5,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_driver_only_node.py",
+      "test_functions": 3,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_head_dashboard_guard.py",
+      "test_functions": 5,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_log_recovery.py",
+      "test_functions": 3,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_metrics_stability.py",
+      "test_functions": 14,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_process_cleanup_adversarial.py",
+      "test_functions": 31,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_process_cleanup_integration.py",
+      "test_functions": 5,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_process_cleanup_runtime_ui.py",
+      "test_functions": 6,
+      "execution_class": "display-required"
+    },
+    {
+      "path": "test_rdp_password_api.py",
+      "test_functions": 6,
+      "execution_class": "isolated-loopback"
+    },
+    {
+      "path": "test_rdp_preflight.py",
+      "test_functions": 4,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_runtime_dpi_widgets.py",
+      "test_functions": 3,
+      "execution_class": "display-required"
+    },
+    {
+      "path": "test_self_update.py",
+      "test_functions": 6,
+      "execution_class": "isolated-loopback"
+    },
+    {
+      "path": "test_settings_cleanup_runtime_ui.py",
+      "test_functions": 7,
+      "execution_class": "display-required"
+    },
+    {
+      "path": "test_stale_owner_recovery.py",
+      "test_functions": 0,
+      "execution_class": "packaged-process-deferred"
+    },
+    {
+      "path": "test_ui_layout.py",
+      "test_functions": 24,
+      "execution_class": "safe-headless"
+    },
+    {
+      "path": "test_windows_credentials.py",
+      "test_functions": 9,
+      "execution_class": "safe-headless"
+    }
+  ],
+  "source_text_assertions": {
+    "status": "PRESERVED_PENDING_BEHAVIOR_REPLACEMENT",
+    "replacement_boundary": "PR-05-through-PR-25-service-and-ui-extraction",
+    "files": [
+      "test_controller_mode.py",
+      "test_dpi_scaling.py",
+      "test_metrics_stability.py",
+      "test_process_cleanup_adversarial.py",
+      "test_process_cleanup_integration.py",
+      "test_process_cleanup_runtime_ui.py",
+      "test_self_update.py",
+      "test_ui_layout.py",
+      "test_windows_credentials.py"
+    ]
+  },
+  "smoke_matrix": {
+    "isolated_source_child": {
+      "status": "PASS",
+      "reason": "production imports and contracts run in a minimal synthetic child with live-operation audit blocks"
+    },
+    "packaged_executable": {
+      "status": "NOT_RUN",
+      "reason": "PR-04 has no approved frozen executable and does not authorize build or live packaged execution"
+    }
+  }
+}

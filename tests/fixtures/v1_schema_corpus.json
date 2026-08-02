@@ -1,0 +1,197 @@
+{
+  "corpus_version": 1,
+  "cases": [
+    {
+      "schema": 0,
+      "source": {
+        "head_ip": "192.0.2.10"
+      }
+    },
+    {
+      "schema": 1,
+      "source": {
+        "schema_version": 1,
+        "head_ip": "192.0.2.11",
+        "head_port": 6379
+      }
+    },
+    {
+      "schema": 2,
+      "source": {
+        "schema_version": 2,
+        "dashboard_port": 8265,
+        "ray_exe": "auto"
+      }
+    },
+    {
+      "schema": 3,
+      "source": {
+        "schema_version": 3,
+        "this": {
+          "ip": "192.0.2.13",
+          "mode": "ray",
+          "num_cpus": "auto",
+          "role": "worker"
+        }
+      }
+    },
+    {
+      "schema": 4,
+      "source": {
+        "schema_version": 4,
+        "nodes": [
+          {
+            "enabled": true,
+            "ip": "192.0.2.14",
+            "mode": "ray",
+            "name": "synthetic-worker-v4",
+            "num_cpus": 4,
+            "role": "worker"
+          },
+          {
+            "address": "2001:db8::14",
+            "enabled": true,
+            "mode": "ray",
+            "name": "synthetic-worker-v4-ipv6",
+            "num_cpus": 2,
+            "role": "worker"
+          }
+        ]
+      }
+    },
+    {
+      "schema": 5,
+      "source": {
+        "dashboard_stale_grace_sec": 45.0,
+        "poll_interval": 1.5,
+        "schema_version": 5
+      }
+    },
+    {
+      "schema": 6,
+      "source": {
+        "metrics_enabled": true,
+        "metrics_timeout_sec": 3.0,
+        "schema_version": 6
+      }
+    },
+    {
+      "schema": 7,
+      "source": {
+        "diagnostic_font": "Consolas",
+        "node_row_mode": "compact",
+        "on_close": "tray",
+        "schema_version": 7,
+        "theme": "classic"
+      }
+    },
+    {
+      "schema": 8,
+      "source": {
+        "process_cleanup": {
+          "grace_sec": 3.0,
+          "ignored_fingerprints": [],
+          "result_max_age_sec": 60.0,
+          "sample_sec": 8.0
+        },
+        "schema_version": 8
+      }
+    },
+    {
+      "schema": 9,
+      "source": {
+        "schema_version": 9,
+        "temp_auto_pause": false,
+        "temp_critical_c": 100,
+        "temp_enabled": true,
+        "temp_poll_sec": 2.0,
+        "temp_port": 8866,
+        "temp_warn_c": 80
+      }
+    },
+    {
+      "schema": 10,
+      "source": {
+        "schema_version": 10,
+        "watchdog_enabled": true,
+        "watchdog_interval_sec": 60,
+        "watchdog_stale_cycles": 3
+      }
+    },
+    {
+      "schema": 11,
+      "source": {
+        "ray_worker_fixed_ports": true,
+        "ray_worker_max_port": 10100,
+        "ray_worker_min_port": 10002,
+        "ray_worker_node_manager_port": 6380,
+        "ray_worker_object_manager_port": 6381,
+        "ray_worker_runtime_env_agent_port": 6382,
+        "schema_version": 11
+      }
+    },
+    {
+      "schema": 12,
+      "source": {
+        "credential_controller_ips": [
+          "192.0.2.22",
+          "2001:db8::22"
+        ],
+        "schema_version": 12
+      }
+    },
+    {
+      "schema": 13,
+      "source": {
+        "schema_version": 13,
+        "update_controller_ips": [
+          "192.0.2.23"
+        ]
+      }
+    },
+    {
+      "schema": 14,
+      "source": {
+        "cluster_controller_ips": [
+          "2001:db8::24"
+        ],
+        "schema_version": 14,
+        "this": {
+          "ip": "192.0.2.24",
+          "mode": "ray",
+          "num_cpus": 0,
+          "role": "worker"
+        }
+      }
+    },
+    {
+      "schema": 15,
+      "source": {
+        "cluster_epoch": 15,
+        "cluster_manifest_path": "state/cluster.json",
+        "credential_references": [
+          "credential://synthetic-controller-v15"
+        ],
+        "head_dashboard_guard_cycles": 3,
+        "head_dashboard_guard_enabled": true,
+        "head_dashboard_guard_interval_sec": 20,
+        "nodes": [
+          {
+            "credential_reference": "credential://synthetic-worker-v15",
+            "enabled": true,
+            "ip": "192.0.2.25",
+            "mode": "ray",
+            "name": "synthetic-worker-v15",
+            "num_cpus": 8,
+            "role": "worker"
+          }
+        ],
+        "official_exe_path": "updates/rcm.exe",
+        "schema_version": 15,
+        "trusted_controller_ids": [
+          "synthetic-controller-v15"
+        ]
+      }
+    }
+  ]
+}

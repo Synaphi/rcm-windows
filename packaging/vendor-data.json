@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "component": {
+    "name": "LibreHardwareMonitor",
+    "version": "0.9.6",
+    "license": "MPL-2.0"
+  },
+  "source_archive": {
+    "name": "LibreHardwareMonitor.zip",
+    "release_url": "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.6",
+    "download_url": "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v0.9.6/LibreHardwareMonitor.zip",
+    "size": 6632626,
+    "sha256": "086d9f1b5a99e643edc2cfaaac16051685b551e4c5ac0b32a57c58c0e529c001"
+  },
+  "license_source": {
+    "url": "https://raw.githubusercontent.com/LibreHardwareMonitor/LibreHardwareMonitor/v0.9.6/LICENSE",
+    "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+  },
+  "files": [
+    {
+      "source_name": "LibreHardwareMonitorLib.dll",
+      "destination": "lhm/LibreHardwareMonitorLib.dll",
+      "kind": "library",
+      "size": 1203200,
+      "sha256": "6ebc194316536ba61af5be24508ad9fcbb2ecc685e716c12e787c79530f66bf0"
+    },
+    {
+      "source_name": "BlackSharp.Core.dll",
+      "destination": "lhm/BlackSharp.Core.dll",
+      "kind": "library",
+      "size": 32768,
+      "sha256": "cafb93afcc8d8a367e21f619673d05c06887d8964867fed1371f02ded1cd3e23"
+    },
+    {
+      "source_name": "DiskInfoToolkit.dll",
+      "destination": "lhm/DiskInfoToolkit.dll",
+      "kind": "library",
+      "size": 903680,
+      "sha256": "1acbf51b3c10c51c986cf43021680d34a2e38d9a5ba652bcfa9a1b5f7fc09800"
+    },
+    {
+      "source_name": "HidSharp.dll",
+      "destination": "lhm/HidSharp.dll",
+      "kind": "library",
+      "size": 262792,
+      "sha256": "d86690efde30ea9179f669320f39148853793b743a98b531afeaf30598e22f54"
+    },
+    {
+      "source_name": "RAMSPDToolkit-NDD.dll",
+      "destination": "lhm/RAMSPDToolkit-NDD.dll",
+      "kind": "library",
+      "size": 233472,
+      "sha256": "b6882354c7c8ec186617e421507743dbfae09c5c1fc24cef76a1d0c0c26651de"
+    },
+    {
+      "source_name": "System.Buffers.dll",
+      "destination": "lhm/System.Buffers.dll",
+      "kind": "library",
+      "size": 23816,
+      "sha256": "2d78d770c9cb997199154ae8c018b9f1d1efbc86729f7264dde6dbad2a12cac3"
+    },
+    {
+      "source_name": "System.Memory.dll",
+      "destination": "lhm/System.Memory.dll",
+      "kind": "library",
+      "size": 145200,
+      "sha256": "d5e8e4866f9cfa66f7765660f84b210198893e55335487afe5ebda342c0e913d"
+    },
+    {
+      "source_name": "System.Numerics.Vectors.dll",
+      "destination": "lhm/System.Numerics.Vectors.dll",
+      "kind": "library",
+      "size": 110344,
+      "sha256": "20c2fa81b8c70d651099d762954f285fd4f942e63b2d7217c145dab8d4b2f4c9"
+    },
+    {
+      "source_name": "System.Runtime.CompilerServices.Unsafe.dll",
+      "destination": "lhm/System.Runtime.CompilerServices.Unsafe.dll",
+      "kind": "library",
+      "size": 19256,
+      "sha256": "08cbd7278b66f1e68425a82d4b97181a4130d93e3dd91831407aba7212ccdacf"
+    },
+    {
+      "source_name": "LICENSE-LibreHardwareMonitor.txt",
+      "destination": "lhm/LICENSE-LibreHardwareMonitor.txt",
+      "kind": "license",
+      "size": 16725,
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+name: Public Source
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  public-source-linux:
+    name: Public Source Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact event source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Prepare and validate public source
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+
+          root = Path.cwd()
+          public_root = root
+          temporary = None
+          export_parent = None
+          try:
+              if (root / "policy/public-export-source-map.json").is_file():
+                  temporary = tempfile.TemporaryDirectory(
+                      prefix="rcm-public-source-",
+                      dir=os.environ["RUNNER_TEMP"],
+                  )
+                  export_parent = Path(temporary.name)
+                  public_root = export_parent / "source"
+                  subprocess.check_call([
+                      sys.executable, "-B", "scripts/export_public_source.py",
+                      "--destination", str(public_root),
+                  ])
+              subprocess.check_call([
+                  sys.executable, "-B", "scripts/check_public_source.py",
+                  "--tree", str(public_root),
+              ], cwd=public_root)
+              subprocess.check_call([
+                  sys.executable, "-B", "-m", "unittest", "discover",
+                  "-s", "tests", "-p", "test_*.py", "-v",
+              ], cwd=public_root, env={**os.environ, "PYTHONPATH": "src"})
+          finally:
+              if temporary is not None:
+                  temporary.cleanup()
+                  if export_parent.exists():
+                      raise RuntimeError("temporary export residue remains")
+
+  public-source-windows:
+    name: Public Source Windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact event source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Prepare and validate public source
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+
+          root = Path.cwd()
+          public_root = root
+          temporary = None
+          export_parent = None
+          try:
+              if (root / "policy/public-export-source-map.json").is_file():
+                  temporary = tempfile.TemporaryDirectory(
+                      prefix="rcm-public-source-",
+                      dir=os.environ["RUNNER_TEMP"],
+                  )
+                  export_parent = Path(temporary.name)
+                  public_root = export_parent / "source"
+                  subprocess.check_call([
+                      sys.executable, "-B", "scripts/export_public_source.py",
+                      "--destination", str(public_root),
+                  ])
+              subprocess.check_call([
+                  sys.executable, "-B", "scripts/check_public_source.py",
+                  "--tree", str(public_root),
+              ], cwd=public_root)
+              subprocess.check_call([
+                  sys.executable, "-B", "-m", "unittest", "discover",
+                  "-s", "tests", "-p", "test_*.py", "-v",
+              ], cwd=public_root, env={**os.environ, "PYTHONPATH": "src"})
+          finally:
+              if temporary is not None:
+                  temporary.cleanup()
+                  if export_parent.exists():
+                      raise RuntimeError("temporary export residue remains")
