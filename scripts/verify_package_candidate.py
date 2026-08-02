@@ -8,6 +8,7 @@ import ast
 from contextlib import contextmanager
 import hashlib
 import importlib
+import io
 import json
 import math
 import os
@@ -15,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from typing import Mapping
@@ -332,11 +334,25 @@ def _git_file(root: Path, commit: str, path: str) -> bytes:
     return _git_bytes(("show", f"{commit}:{path}"), root=root)
 
 
-def _git_public_snapshot_sha256(root: Path, commit: str) -> str:
+def _git_optional_file(root: Path, commit: str, path: str) -> bytes | None:
+    completed = subprocess.run(
+        ("git", "show", f"{commit}:{path}"),
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def _git_public_snapshot_sha256(root: Path, commit: str) -> str | None:
+    allowlist_bytes = _git_optional_file(
+        root, commit, "policy/public-export-allowlist.txt"
+    )
+    if allowlist_bytes is None:
+        return None
     try:
-        allowlist = _git_file(
-            root, commit, "policy/public-export-allowlist.txt"
-        ).decode("utf-8")
+        allowlist = allowlist_bytes.decode("utf-8")
     except UnicodeError as exc:
         raise CandidateError("public source allowlist is unreadable") from exc
     destinations = [
@@ -344,21 +360,13 @@ def _git_public_snapshot_sha256(root: Path, commit: str) -> str:
         for line in allowlist.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    source_map_result = subprocess.run(
-        (
-            "git",
-            "show",
-            f"{commit}:policy/public-export-source-map.json",
-        ),
-        cwd=root,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+    source_map_bytes = _git_optional_file(
+        root, commit, "policy/public-export-source-map.json"
     )
     mapping: dict[str, str] = {}
-    if source_map_result.returncode == 0:
+    if source_map_bytes is not None:
         document = _decode_json_bytes(
-            source_map_result.stdout,
+            source_map_bytes,
             label="public source mapping",
         )
         rows = document.get("mappings")
@@ -373,13 +381,37 @@ def _git_public_snapshot_sha256(root: Path, commit: str) -> str:
             ):
                 raise CandidateError("public source mapping is malformed")
             mapping[str(row["destination"])] = str(row["source"])
+    sources = {mapping.get(item, item) for item in destinations}
+    archive = subprocess.run(
+        ("git", "archive", "--format=tar", commit, "--", *sorted(sources)),
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if archive.returncode != 0:
+        raise CandidateError("public source snapshot archive is unavailable")
+    files: dict[str, bytes] = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:") as value:
+            for member in value.getmembers():
+                if not member.isfile():
+                    continue
+                stream = value.extractfile(member)
+                if stream is None:
+                    raise CandidateError("public source snapshot is unreadable")
+                files[member.name] = stream.read()
+    except tarfile.TarError as exc:
+        raise CandidateError("public source snapshot archive is invalid") from exc
+    if set(files) != sources:
+        raise CandidateError("public source snapshot is incomplete")
     digest = hashlib.sha256()
     for destination in sorted(destinations, key=str.casefold):
         source = mapping.get(destination, destination)
         encoded = destination.encode("utf-8")
         digest.update(len(encoded).to_bytes(4, "big"))
         digest.update(encoded)
-        digest.update(hashlib.sha256(_git_file(root, commit, source)).digest())
+        digest.update(hashlib.sha256(files[source]).digest())
     return digest.hexdigest()
 
 

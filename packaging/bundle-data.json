@@ -28,23 +28,20 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "candidate": {
-    "state": "not_built",
-    "file": null,
-    "size": null,
-    "sha256": null,
-    "public_source_snapshot_sha256": null,
-    "package_manifest_sha256": null,
+    "state": "frozen",
+    "file": "RayClusterManager-PR07.exe",
+    "size": 21141095,
+    "sha256": "3fe396836945791a94c25039e036c299504f01b208eb50f1e43d373263f9e453",
+    "public_source_snapshot_sha256": "ddaec2eec2331c7e486c2e13ed436d87ab7cec2318cd3654366adfde29780e09",
+    "package_manifest_sha256": "5d8d7d9b8c213dcd705aa4e41753304e2abb0599c72ee41484b0889d8e70ad87",
     "local_admin_elevation_enabled": false,
     "verification": {
       "visible_quit_cycles": 50,
       "hidden_show_quit_cycles": 25,
       "minimized_show_quit_cycles": 25,
-      "passed_cycles": null,
-      "evidence_sha256": null
+      "passed_cycles": 100,
+      "evidence_sha256": "705c19f84701f0014d538c314c204d995aca7b54191c4b6c044162debabb7eda"
     },
-    "blockers": [
-      "candidate_not_built",
-      "packaged_lifecycle_not_run"
-    ]
+    "blockers": []
   }
 }
