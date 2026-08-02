@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import inspect
 import json
 import os
 from pathlib import Path
@@ -172,6 +173,10 @@ class WindowsPackageBuildTests(unittest.TestCase):
             version_data,
         )
         self.assertIn(b"ProductVersion', '2.08.02a'", version_data)
+
+        verifier_source = inspect.getsource(candidate_verify._main_window_state)
+        self.assertIn("IsWindow", verifier_source)
+        self.assertGreaterEqual(verifier_source.count("if not is_window(hwnd)"), 2)
 
     def test_offline_child_guard_remains_subclass_compatible(self) -> None:
         guarded = package_build._guarded_popen_type(

@@ -1044,6 +1044,7 @@ def _main_window_state(pids: set[int]) -> str:
     get_pid = ctypes.windll.user32.GetWindowThreadProcessId
     get_title = ctypes.windll.user32.GetWindowTextW
     get_class = ctypes.windll.user32.GetClassNameW
+    is_window = ctypes.windll.user32.IsWindow
     is_visible = ctypes.windll.user32.IsWindowVisible
     is_iconic = ctypes.windll.user32.IsIconic
     get_pid.argtypes = (
@@ -1059,6 +1060,8 @@ def _main_window_state(pids: set[int]) -> str:
     get_title.restype = ctypes.c_int
     get_class.argtypes = get_title.argtypes
     get_class.restype = ctypes.c_int
+    is_window.argtypes = (wintypes.HWND,)
+    is_window.restype = wintypes.BOOL
     is_visible.argtypes = (wintypes.HWND,)
     is_visible.restype = wintypes.BOOL
     is_iconic.argtypes = (wintypes.HWND,)
@@ -1074,6 +1077,8 @@ def _main_window_state(pids: set[int]) -> str:
     def observe(hwnd: int, _parameter: int) -> bool:
         pid = wintypes.DWORD()
         if not get_pid(hwnd, ctypes.byref(pid)):
+            if not is_window(hwnd):
+                return True
             failure.append("unable to identify enumerated window owner")
             return False
         if int(pid.value) not in pids:
@@ -1082,6 +1087,8 @@ def _main_window_state(pids: set[int]) -> str:
         window_class = ctypes.create_unicode_buffer(256)
         get_title(hwnd, title, len(title))
         if not get_class(hwnd, window_class, len(window_class)):
+            if not is_window(hwnd):
+                return True
             failure.append("unable to identify candidate window class")
             return False
         records.append(
