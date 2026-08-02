@@ -14,6 +14,28 @@ from scripts import build_windows_package as package_build
 from scripts import verify_package_candidate as candidate_verify
 
 
+def _configuration_checks_fixture() -> dict[str, object]:
+    return {
+        deployment: {
+            "deployment": deployment,
+            "create_exit_code": 0,
+            "reload_exit_code": 0,
+            "generation": 1,
+            "config_size": 512,
+            "config_sha256": marker * 64,
+            "maximum_network_connections": 0,
+            "maximum_network_listeners": 0,
+            "maximum_descendants": 1,
+            "process_residue": 0,
+            "temporary_artifact_residue": 0,
+        }
+        for deployment, marker in (
+            ("installed", "a"),
+            ("portable", "b"),
+        )
+    }
+
+
 class WindowsPackageBuildTests(unittest.TestCase):
     def test_output_and_inputs_must_be_explicitly_external(self) -> None:
         root = package_build.repository_root()
@@ -163,16 +185,16 @@ class WindowsPackageBuildTests(unittest.TestCase):
             package_build.hashlib.sha256(version_data).hexdigest(),
             version_digest,
         )
-        self.assertIn(b"filevers=(2, 8, 2, 1)", version_data)
+        self.assertIn(b"filevers=(2, 8, 3, 1)", version_data)
         self.assertIn(
-            b"FileVersion', '2.' + '8.' + '2.' + '1'",
+            b"FileVersion', '2.' + '8.' + '3.' + '1'",
             version_data,
         )
         self.assertIn(
-            b"OriginalFilename', 'RCM-2.08.02a-windows-x64.exe'",
+            b"OriginalFilename', 'RCM-2.08.03a-windows-x64.exe'",
             version_data,
         )
-        self.assertIn(b"ProductVersion', '2.08.02a'", version_data)
+        self.assertIn(b"ProductVersion', '2.08.03a'", version_data)
 
         verifier_source = inspect.getsource(candidate_verify._main_window_state)
         self.assertIn("IsWindow", verifier_source)
@@ -469,6 +491,7 @@ class WindowsPackageBuildTests(unittest.TestCase):
                 "development_state_preservation",
                 "stale_owner_preservation",
                 "sentinel_state_preservation",
+                "configuration_bootstrap",
             ),
             tuple(candidate_verify.CLAIM_ASSERTIONS),
         )
@@ -476,6 +499,11 @@ class WindowsPackageBuildTests(unittest.TestCase):
             '(str(executable), "--lifecycle-check", scenario)',
             source,
         )
+        self.assertIn(
+            '(str(candidate), "--internal-configuration-check")',
+            source,
+        )
+        self.assertIn('for deployment in ("installed", "portable")', source)
         self.assertIn("first_ready - started > 5.0", source)
         self.assertIn("finished - first_ready > 5.0", source)
         self.assertIn("maximum_descendants != 1", source)
@@ -804,6 +832,7 @@ class WindowsPackageBuildTests(unittest.TestCase):
         value = candidate_verify._evidence_value(
             manifest=manifest,
             receipts=receipts,
+            configuration_checks=_configuration_checks_fixture(),
             vendor_bytes=123,
             residue_count=0,
         )
@@ -850,6 +879,27 @@ class WindowsPackageBuildTests(unittest.TestCase):
             self.assertNotIn(frozen.name, printed)
             self.assertNotIn(str(root), printed)
 
+            changed = json.loads(raw)
+            changed["observations"]["configuration_checks"]["installed"][
+                "maximum_network_connections"
+            ] = 1
+            configuration_tamper = candidate_verify._canonical_bytes(changed)
+            frozen.write_bytes(configuration_tamper)
+            contract["verification"]["evidence_sha256"] = (
+                candidate_verify.hashlib.sha256(
+                    configuration_tamper
+                ).hexdigest()
+            )
+            with self.assertRaisesRegex(
+                candidate_verify.CandidateError,
+                "configuration",
+            ):
+                candidate_verify._validate_frozen_evidence(
+                    evidence=frozen,
+                    manifest=manifest,
+                    contract=contract,
+                    vendor_bytes=123,
+                )
             changed = json.loads(raw)
             changed["lifecycle"]["receipts"][0]["duration_ms"] = 31
             changed["observations"]["maximum_duration_ms"] = 31
@@ -913,6 +963,7 @@ class WindowsPackageBuildTests(unittest.TestCase):
         primary = candidate_verify._evidence_value(
             manifest=manifest,
             receipts=primary_receipts,
+            configuration_checks=_configuration_checks_fixture(),
             vendor_bytes=123,
             residue_count=0,
         )
@@ -949,6 +1000,11 @@ class WindowsPackageBuildTests(unittest.TestCase):
                     candidate_verify,
                     "_load_psutil",
                     return_value=object(),
+                ),
+                mock.patch.object(
+                    candidate_verify,
+                    "_configuration_checks",
+                    return_value=_configuration_checks_fixture(),
                 ),
                 mock.patch.object(
                     candidate_verify,

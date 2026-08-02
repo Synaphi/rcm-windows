@@ -105,7 +105,7 @@ class PackageBootstrapTests(unittest.TestCase):
                 windows_desktop = importlib.import_module(
                     "rcm.adapters.windows_desktop"
                 )
-            self.assertEqual("2.8.2a1", package.__version__)
+            self.assertEqual("2.8.3a1", package.__version__)
             self.assertTrue(callable(module_entrypoint.main))
             self.assertTrue(callable(ui.fit_scale))
             self.assertTrue(hasattr(desktop, "DesktopLifecycle"))
@@ -407,6 +407,32 @@ class PackageBootstrapTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "unsupported lifecycle"):
             main(argv=("--lifecycle-check", "unknown"))
+
+    def test_module_main_routes_configure_to_the_local_wizard(self) -> None:
+        from rcm.__main__ import main
+
+        with mock.patch(
+            "rcm.setup.run_configuration_wizard", return_value=19
+        ) as configure:
+            self.assertEqual(19, main(argv=("--configure",)))
+        configure.assert_called_once_with()
+
+        with self.assertRaisesRegex(ValueError, "launcher"):
+            main(lambda: 0, argv=("--configure",))
+
+    def test_module_main_routes_guarded_internal_configuration_check(self) -> None:
+        from rcm.__main__ import main
+
+        with mock.patch(
+            "rcm.setup.run_internal_configuration_check", return_value=23
+        ) as check:
+            self.assertEqual(
+                23,
+                main(argv=("--internal-configuration-check",)),
+            )
+        check.assert_called_once_with()
+        with self.assertRaisesRegex(ValueError, "launcher"):
+            main(lambda: 0, argv=("--internal-configuration-check",))
 
     def test_module_main_dispatches_fixed_local_admin_helper_lazily(
         self,

@@ -9,7 +9,7 @@
     {
       "id": "nodes",
       "title": "Nodes",
-      "body": "Add or edit typed node records in Settings. Changes are validated before saving."
+      "body": "This preview validates node records from the local config.json file at startup. The packaged Settings surface is currently read-only. Use Quit from the notification-area tray icon (the window close button only hides RCM), then rerun it with --configure to change supported local fields. Keep real topology out of source control."
     },
     {
       "id": "rdp",
@@ -25,6 +25,11 @@
       "id": "exit",
       "title": "Hide and exit",
       "body": "Closing the main window hides it. Use Show to restore it or Quit for bounded graceful shutdown."
+    },
+    {
+      "id": "preview-limits",
+      "title": "Preview limits",
+      "body": "The current packaged preview demonstrates the desktop and validated local configuration foundation. Service buttons that report unavailable are not configured in this build; it is not a fleet agent or a replacement for an existing 1.x deployment."
     }
   ]
 }

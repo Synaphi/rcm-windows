@@ -33,4 +33,4 @@ __all__ = (
     "select_deployment",
 )
 
-__version__ = "2.8.2a1"
+__version__ = "2.8.3a1"

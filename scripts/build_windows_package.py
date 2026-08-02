@@ -29,8 +29,8 @@ ARTIFACT_NAME = "RayClusterManager-PR07.exe"
 WINDOWS_VERSION_RESOURCE = """# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 8, 2, 1),
-    prodvers=(2, 8, 2, 1),
+    filevers=(2, 8, 3, 1),
+    prodvers=(2, 8, 3, 1),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -45,11 +45,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Synaphi'),
           StringStruct('FileDescription', 'Ray Cluster Manager Windows preview'),
-          StringStruct('FileVersion', '2.' + '8.' + '2.' + '1'),
+          StringStruct('FileVersion', '2.' + '8.' + '3.' + '1'),
           StringStruct('InternalName', 'RayClusterManager'),
-          StringStruct('OriginalFilename', 'RCM-2.08.02a-windows-x64.exe'),
+          StringStruct('OriginalFilename', 'RCM-2.08.03a-windows-x64.exe'),
           StringStruct('ProductName', 'Ray Cluster Manager'),
-          StringStruct('ProductVersion', '2.08.02a'),
+          StringStruct('ProductVersion', '2.08.03a'),
         ],
       )
     ]),
@@ -88,6 +88,7 @@ HIDDEN_IMPORTS = (
     "rcm.privilege",
     "rcm.replacement",
     "rcm.resources",
+    "rcm.setup",
     "rcm.ui",
     "rcm.ui.app",
     "rcm.ui.cleanup_dialog",
@@ -131,6 +132,7 @@ REQUIRED_FROZEN_MODULES = (
     "rcm.privilege",
     "rcm.replacement",
     "rcm.resources",
+    "rcm.setup",
     "rcm.ui",
     "rcm.ui.app",
     "rcm.ui.cleanup_dialog",

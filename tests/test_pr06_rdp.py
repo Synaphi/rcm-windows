@@ -112,6 +112,7 @@ class RdpServiceTests(unittest.TestCase):
             [
                 "screen mode id:i:2",
                 "use multimon:i:0",
+                "keyboardhook:i:0",
                 "desktopwidth:i:1280",
                 "desktopheight:i:720",
                 "session bpp:i:32",

@@ -27,11 +27,13 @@ the issue and affected scope are understood.
 
 The intended boundary is local-first:
 
-- health, temperature, and metrics HTTP endpoints bind to `127.0.0.1` only;
-- RDP actions are outbound launches and port preflight initiated locally;
+- health, temperature, and metrics HTTP endpoints, when composed, bind to
+  `127.0.0.1` only;
+- RDP service plans are outbound launches and port preflight initiated locally;
 - the desktop application normally runs without elevation;
 - privileged local changes are disabled in the unsigned one-file preview;
-- configuration and logs remain in local application data;
+- configuration and logs remain in local application data, and configuration
+  records are schema-validated and integrity-checked before use;
 - dependency inputs are pinned and hash locked; and
 - no telemetry, updater, background service, remote RCM command surface, or
   default inbound firewall rule is provided.

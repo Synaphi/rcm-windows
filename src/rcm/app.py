@@ -262,6 +262,7 @@ def main(
     from .bootstrap import Environment, select_deployment
     from .identity import identity_for, preview_validation_identity
     from .local_admin import LocalAdminService
+    from .setup import host_bootstrap_plan, initialize_runtime_config
 
     environment = Environment(
         {
@@ -270,17 +271,19 @@ def main(
             if key in os.environ
         }
     )
+    frozen = bool(getattr(sys, "frozen", False))
     identity = (
         preview_validation_identity()
         if lifecycle_scenario is not None
-        else identity_for(
-            select_deployment(
-                environment,
-                frozen=bool(getattr(sys, "frozen", False)),
-            )
-        )
+        else identity_for(select_deployment(environment, frozen=frozen))
     )
-    config = default_config()
+    config = (
+        default_config()
+        if lifecycle_scenario is not None
+        else initialize_runtime_config(
+            host_bootstrap_plan(environment, frozen=frozen)
+        ).config
+    )
     if lifecycle_scenario is not None:
         autostart = False
         command_handler = unavailable_command_handler

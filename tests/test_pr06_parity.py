@@ -54,8 +54,10 @@ class FrozenCharacterizationParityTests(unittest.TestCase):
 
         self.assertEqual(frozen["file_name"], plan.file_name)
         self.assertEqual(frozen["ipv4_target"], plan.target)
+        expected_lines = list(frozen["file_lines"])
+        expected_lines.insert(2, "keyboardhook:i:0")
         self.assertEqual(
-            frozen["file_lines"],
+            expected_lines,
             plan.file_bytes.decode("utf-16").splitlines(),
         )
         self.assertEqual(

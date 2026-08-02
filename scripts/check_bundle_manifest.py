@@ -115,16 +115,16 @@ def bundle_data_issues(
         issues.append("bundle source root is not exact")
     if data.get("release") != {
         "channel": "preview",
-        "package_version": "2.8.2a1",
-        "display_version": "2.08.02a",
-        "release_id": "rcm-2-2026-08-02-a",
-        "tag": "v2.08.02a",
-        "sequence": 2026080201,
-        "asset": "RCM-2.08.02a-windows-x64.exe",
+        "package_version": "2.8.3a1",
+        "display_version": "2.08.03a",
+        "release_id": "rcm-2-2026-08-03-a",
+        "tag": "v2.08.03a",
+        "sequence": 2026080301,
+        "asset": "RCM-2.08.03a-windows-x64.exe",
         "windows_version": ".".join(
-            str(part) for part in (2, 8, 2, 1)
+            str(part) for part in (2, 8, 3, 1)
         ),
-        "windows_tuple": [2, 8, 2, 1],
+        "windows_tuple": [2, 8, 3, 1],
         "architecture": "x86_64",
         "prerelease": True,
         "authenticode": False,

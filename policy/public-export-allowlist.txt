@@ -70,6 +70,7 @@ src/rcm/replacement.py
 src/rcm/resources/__init__.py
 src/rcm/resources/help.json
 src/rcm/runtime.py
+src/rcm/setup.py
 src/rcm/ui/__init__.py
 src/rcm/ui/app.py
 src/rcm/ui/cleanup_dialog.py

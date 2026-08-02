@@ -61,7 +61,10 @@ class ViewTests(unittest.TestCase):
     def test_packaged_help_has_all_parity_sections(self) -> None:
         document = load_help(read_help_bytes)
         self.assertEqual(
-            {"overview", "nodes", "rdp", "cleanup", "exit"},
+            {
+                "overview", "nodes", "rdp", "cleanup", "exit",
+                "preview-limits",
+            },
             {section.section_id for section in document.sections},
         )
         self.assertIn("never asks for", document.section("rdp").body)

@@ -74,7 +74,7 @@ class PublicSourceContractTests(PublicTreeMixin, unittest.TestCase):
         self.assertEqual([], checker.validate_public_tree(self.public_root))
         allowlist, issues = checker.load_allowlist(self.public_root)
         self.assertEqual([], issues)
-        self.assertEqual(159, len(allowlist))
+        self.assertEqual(160, len(allowlist))
         self.assertEqual(
             checker.EXPECTED_PATH_DIGEST,
             checker._path_digest(allowlist),
@@ -295,7 +295,7 @@ class PrivateStagingExporterTests(unittest.TestCase):
             ROOT,
             require_clean=False,
         )
-        self.assertEqual(159, len(destinations))
+        self.assertEqual(160, len(destinations))
         self.assertEqual(20, len(exclusions))
         self.assertEqual({"AGENTS.md": "AGENTS.public.md"}, mapping)
         with tempfile.TemporaryDirectory(prefix="rcm-export-pair-") as temporary:

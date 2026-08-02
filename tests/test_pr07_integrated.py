@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -10,7 +12,21 @@ from fake_test_kit.guard import NoLiveAccessGuard
 from fake_test_kit.privilege import FakePrivilegeBoundary
 from rcm.app import main as run_desktop
 from rcm.app import render_state_from_config
-from rcm.config.schema import Node, NodesSection, default_config
+from rcm.bootstrap import BootstrapRequest, Environment, plan_bootstrap
+from rcm.config.store import ConfigConflictError, ConfigStore, StoredConfig
+from rcm.paths import KnownFolders
+from rcm.setup import (
+    _configuration_form_result,
+    configure_local_node,
+    host_bootstrap_plan,
+    initialize_runtime_config,
+)
+from rcm.config.schema import (
+    Node,
+    NodesSection,
+    config_checksum,
+    default_config,
+)
 from rcm.local_admin import LocalAdminService
 from rcm.ui.app import LocalAdminCommandHandler, UiApplication
 from rcm.ui.state import (
@@ -152,6 +168,14 @@ class IntegratedUiTests(unittest.TestCase):
                 "rcm.adapters.windows_broker.WindowsOneShotBroker",
                 return_value=boundary,
             ),
+            mock.patch(
+                "rcm.setup.host_bootstrap_plan",
+                return_value=object(),
+            ),
+            mock.patch(
+                "rcm.setup.initialize_runtime_config",
+                return_value=mock.Mock(config=default_config()),
+            ),
             NoLiveAccessGuard() as guard,
         ):
             result = run_desktop()
@@ -159,6 +183,183 @@ class IntegratedUiTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual([], guard.violations)
         self.assertEqual([], boundary.events)
+
+    def test_first_launch_persists_defaults_and_reuses_valid_config(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rcm-config-startup-") as temporary:
+            root = Path(temporary).resolve()
+            plan = plan_bootstrap(BootstrapRequest(
+                environment=Environment({}),
+                known_folders=KnownFolders(local_app_data=root / "local"),
+                application_root=root / "app",
+                resource_root=root / "resources",
+                current_binary=root / "app" / "python.exe",
+                frozen=False,
+            ))
+            first = initialize_runtime_config(plan)
+            self.assertEqual(1, first.generation)
+            self.assertTrue(Path(str(plan.paths.config_file)).is_file())
+            self.assertTrue(Path(str(plan.paths.log_directory)).is_dir())
+
+            configured = replace(
+                first.config,
+                nodes=NodesSection(
+                    (Node("worker", "192.0.2.20", "worker"),),
+                    "worker",
+                ),
+            )
+            saved = ConfigStore(Path(str(plan.paths.config_file))).save(
+                configured,
+                expected_generation=first.generation,
+            )
+            second = initialize_runtime_config(plan)
+
+        self.assertEqual(saved, second)
+        self.assertEqual("worker", second.config.nodes.local_node_id)
+
+    def test_first_launch_records_installed_and_portable_deployment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rcm-config-modes-") as temporary:
+            root = Path(temporary).resolve()
+            for values, expected in (
+                ({}, "installed"),
+                ({"RCM_PORTABLE": "1"}, "portable"),
+            ):
+                with self.subTest(expected=expected):
+                    plan = plan_bootstrap(BootstrapRequest(
+                        environment=Environment(values),
+                        known_folders=KnownFolders(
+                            local_app_data=root / expected / "local"),
+                        application_root=root / expected / "app",
+                        resource_root=root / expected / "resources",
+                        current_binary=root / expected / "app" / "rcm.exe",
+                        frozen=True,
+                    ))
+                    stored = initialize_runtime_config(plan)
+                    self.assertEqual(
+                        expected,
+                        stored.config.app.environment,
+                    )
+
+    def test_first_launch_conflict_reloads_strict_winner(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rcm-config-race-") as temporary:
+            root = Path(temporary).resolve()
+            plan = plan_bootstrap(BootstrapRequest(
+                environment=Environment({}),
+                known_folders=KnownFolders(local_app_data=root / "local"),
+                application_root=root / "app",
+                resource_root=root / "resources",
+                current_binary=root / "app" / "rcm.exe",
+                frozen=True,
+            ))
+            initial = default_config()
+            winner_config = replace(
+                initial,
+                app=replace(initial.app, environment="installed"),
+            )
+            empty = StoredConfig(initial, 0, config_checksum(initial))
+            winner = StoredConfig(
+                winner_config,
+                1,
+                config_checksum(winner_config),
+            )
+            store = mock.Mock()
+            store.load.side_effect = (empty, winner)
+            store.save.side_effect = ConfigConflictError("synthetic race")
+            with mock.patch("rcm.setup.ConfigStore", return_value=store):
+                observed = initialize_runtime_config(plan)
+        self.assertEqual(winner, observed)
+        self.assertEqual(2, store.load.call_count)
+
+    def test_portable_host_plan_does_not_require_localappdata(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            plan = host_bootstrap_plan(
+                Environment({"RCM_PORTABLE": "1"}),
+                frozen=True,
+            )
+        self.assertEqual("portable", plan.identity.deployment.value)
+        self.assertEqual("data", plan.paths.config_directory.name)
+
+    def test_setup_fields_add_then_replace_only_the_local_node(self) -> None:
+        original = replace(
+            default_config(),
+            nodes=NodesSection(
+                (Node("remote", "192.0.2.50", "observer"),),
+                "",
+            ),
+        )
+        added = configure_local_node(
+            original,
+            node_id="local-a",
+            address="192.0.2.20",
+            role="worker",
+            cpu_count=8,
+            monitoring_enabled=True,
+            start_minimized=False,
+        )
+        replaced_local = configure_local_node(
+            added,
+            node_id="local-b",
+            address="192.0.2.21",
+            role="head",
+            cpu_count=0,
+            monitoring_enabled=False,
+            start_minimized=True,
+        )
+
+        self.assertEqual(
+            ("remote", "local-b"),
+            tuple(node.node_id for node in replaced_local.nodes.items),
+        )
+        self.assertEqual("local-b", replaced_local.nodes.local_node_id)
+        self.assertFalse(replaced_local.monitoring.enabled)
+        self.assertTrue(replaced_local.app.start_minimized)
+
+    def test_setup_fields_reject_malformed_nodes(self) -> None:
+        for node_id, address in (
+            ("bad id", "192.0.2.20"),
+            ("local-a", "host name"),
+        ):
+            with self.subTest(node_id=node_id, address=address):
+                with self.assertRaises(ValueError):
+                    configure_local_node(
+                        default_config(),
+                        node_id=node_id,
+                        address=address,
+                        role="worker",
+                        cpu_count=0,
+                        monitoring_enabled=True,
+                        start_minimized=False,
+                    )
+
+    def test_setup_form_reports_cross_node_validation_conflicts(self) -> None:
+        cases = (
+            (
+                NodesSection(
+                    (Node("remote", "192.0.2.50", "observer"),),
+                    "",
+                ),
+                {"node_id": "REMOTE", "role": "worker"},
+            ),
+            (
+                NodesSection(
+                    (Node("remote-head", "192.0.2.50", "head"),),
+                    "",
+                ),
+                {"node_id": "local", "role": "head"},
+            ),
+        )
+        for nodes, fields in cases:
+            with self.subTest(fields=fields):
+                configured, error = _configuration_form_result(
+                    replace(default_config(), nodes=nodes),
+                    node_id=fields["node_id"],
+                    address="192.0.2.20",
+                    role=fields["role"],
+                    cpu_count="0",
+                    monitoring_enabled=True,
+                    start_minimized=False,
+                )
+                self.assertIsNone(configured)
+                self.assertTrue(error)
 
     def test_two_local_admin_ui_intents_reach_only_the_fake_boundary(self) -> None:
         host = IntegratedHost()

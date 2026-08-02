@@ -46,6 +46,20 @@ def main(
         from .foundation_check import print_foundation_report
 
         return print_foundation_report()
+    if arguments == ("--internal-configuration-check",):
+        if launcher is not None:
+            raise ValueError(
+                "a launcher cannot be supplied to configuration check"
+            )
+        from .setup import run_internal_configuration_check
+
+        return run_internal_configuration_check()
+    if arguments == ("--configure",):
+        if launcher is not None:
+            raise ValueError("a launcher cannot be supplied to configuration")
+        from .setup import run_configuration_wizard
+
+        return run_configuration_wizard()
     start_minimized = arguments == ("--start-minimized",)
     lifecycle_scenario = None
     if len(arguments) == 2 and arguments[0] == "--lifecycle-check":

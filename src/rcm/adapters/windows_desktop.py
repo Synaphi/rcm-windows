@@ -63,7 +63,14 @@ def _acquire_windows_mutex(name: str) -> SingletonLease | None:
     ctypes.set_last_error(0)
     handle = create(None, False, name)
     if not handle:
-        raise OSError(ctypes.get_last_error(), "CreateMutexW failed")
+        error = ctypes.get_last_error()
+        # An existing global mutex created at another integrity level may be
+        # visible but not openable with CreateMutexW's requested access.  That
+        # still proves another instance owns the production identity, so fail
+        # closed instead of crashing or allowing a duplicate process.
+        if error == 5:  # ERROR_ACCESS_DENIED
+            return None
+        raise OSError(error, "CreateMutexW failed")
     if ctypes.get_last_error() == 183:
         close(handle)
         return None

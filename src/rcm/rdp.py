@@ -256,6 +256,11 @@ def _rdp_bytes(target: str, principal: str) -> bytes:
     lines = (
         "screen mode id:i:2",
         "use multimon:i:0",
+        # Keep Windows key combinations on the local desktop.  In a
+        # full-screen session mstsc's default routes combinations such as
+        # Ctrl+Win+Arrow to the remote PC and can strand the operator on a
+        # different remote virtual desktop.
+        "keyboardhook:i:0",
         "desktopwidth:i:1280",
         "desktopheight:i:720",
         "session bpp:i:32",

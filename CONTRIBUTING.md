@@ -1,8 +1,9 @@
 # Contributing to RCM
 
 RCM welcomes focused source contributions that preserve its local-first,
-least-privilege boundary. The repository is a source preview, not a binary or
-release channel.
+least-privilege boundary. The repository may have explicitly reviewed unsigned
+prerelease assets, but ordinary source contributions do not authorize or create
+a binary release channel.
 
 ## Before changing code
 
@@ -19,13 +20,14 @@ operator identities in development evidence or commits.
 
 ## Development setup
 
-Use Python 3.12 or newer. On Windows, create an isolated environment and install
-the hash-locked runtime inputs:
+Use Python 3.12 x64. The release build requires exact CPython 3.12.10. On
+Windows, create an isolated environment and install the hash-locked runtime and
+development/build inputs:
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements\runtime-win-x86_64.lock
-.\.venv\Scripts\python.exe -m pip install --no-deps -e .
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements\runtime-win-x86_64.lock -r requirements\dev.lock
+.\.venv\Scripts\python.exe -m pip install --no-build-isolation --no-deps -e .
 ```
 
 Dependency updates must update the applicable lock files, provenance records,
@@ -45,6 +47,13 @@ unreviewed artifact as part of a test.
 
 Packaging, signing, uploading, publishing, and releasing are separate maintainer
 decisions. A source change must not silently add or perform those actions.
+
+For a maintainer-authorized binary candidate, build only from a clean commit
+whose deterministic public-export snapshot is unique in the reachable history.
+Private-only policy or evidence commits must precede a public-source change so
+the lifecycle verifier can identify exactly one source commit without weakening
+the provenance check. If that precondition fails, supersede the candidate and
+build again from a corrected clean commit.
 
 ## Required verification
 

@@ -266,6 +266,27 @@ class DesktopTests(unittest.TestCase):
             )
         self.assertEqual([101], closed)
 
+        denied_kernel = SimpleNamespace(
+            CreateMutexW=Function(lambda _security, _owner, _name: 0),
+            CloseHandle=Function(lambda _handle: True),
+        )
+        with (
+            mock.patch.object(ctypes, "WinDLL", return_value=denied_kernel),
+            mock.patch.object(ctypes, "set_last_error"),
+            mock.patch.object(ctypes, "get_last_error", return_value=5),
+        ):
+            self.assertIsNone(
+                windows_desktop._acquire_windows_mutex("synthetic")
+            )
+
+        with (
+            mock.patch.object(ctypes, "WinDLL", return_value=denied_kernel),
+            mock.patch.object(ctypes, "set_last_error"),
+            mock.patch.object(ctypes, "get_last_error", return_value=87),
+        ):
+            with self.assertRaisesRegex(OSError, "CreateMutexW failed"):
+                windows_desktop._acquire_windows_mutex("synthetic")
+
     def test_autostart_uses_one_current_user_value(self) -> None:
         values: dict[str, str] = {}
 

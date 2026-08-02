@@ -14,6 +14,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -55,6 +56,7 @@ EXPECTED_REQUIRED_MODULES = [
     "rcm.privilege",
     "rcm.replacement",
     "rcm.resources",
+    "rcm.setup",
     "rcm.ui",
     "rcm.ui.app",
     "rcm.ui.cleanup_dialog",
@@ -96,7 +98,7 @@ CLAIM_ASSERTIONS = {
     },
     "production_config_mutation": {
         "status": "NOT_APPLICABLE",
-        "basis": "validation_config_io_disabled",
+        "basis": "isolated_temporary_config_root",
     },
     "official_artifact_mutation": {
         "status": "NOT_APPLICABLE",
@@ -128,7 +130,7 @@ CLAIM_ASSERTIONS = {
     },
     "startup_entry_mutation": {
         "status": "NOT_APPLICABLE",
-        "basis": "validation_config_io_disabled",
+        "basis": "isolated_no_startup_access",
     },
     "scheduled_task_mutation": {
         "status": "NOT_APPLICABLE",
@@ -160,11 +162,11 @@ CLAIM_ASSERTIONS = {
     },
     "production_state_preservation": {
         "status": "NOT_APPLICABLE",
-        "basis": "validation_identity_no_config_io",
+        "basis": "isolated_temporary_config_root",
     },
     "development_state_preservation": {
         "status": "NOT_APPLICABLE",
-        "basis": "validation_identity_no_config_io",
+        "basis": "isolated_temporary_config_root",
     },
     "stale_owner_preservation": {
         "status": "NOT_APPLICABLE",
@@ -173,6 +175,10 @@ CLAIM_ASSERTIONS = {
     "sentinel_state_preservation": {
         "status": "NOT_APPLICABLE",
         "basis": "validation_runtime_empty",
+    },
+    "configuration_bootstrap": {
+        "status": "MEASURED",
+        "basis": "isolated_create_reload_byte_stability",
     },
 }
 
@@ -436,16 +442,16 @@ def _load_contract(root: Path) -> dict[str, object]:
         raise CandidateError("tracked bundle contract schema is not exact")
     if bundle.get("release") != {
         "channel": "preview",
-        "package_version": "2.8.2a1",
-        "display_version": "2.08.02a",
-        "release_id": "rcm-2-2026-08-02-a",
-        "tag": "v2.08.02a",
-        "sequence": 2026080201,
-        "asset": "RCM-2.08.02a-windows-x64.exe",
+        "package_version": "2.8.3a1",
+        "display_version": "2.08.03a",
+        "release_id": "rcm-2-2026-08-03-a",
+        "tag": "v2.08.03a",
+        "sequence": 2026080301,
+        "asset": "RCM-2.08.03a-windows-x64.exe",
         "windows_version": ".".join(
-            str(part) for part in (2, 8, 2, 1)
+            str(part) for part in (2, 8, 3, 1)
         ),
-        "windows_tuple": [2, 8, 2, 1],
+        "windows_tuple": [2, 8, 3, 1],
         "architecture": "x86_64",
         "prerelease": True,
         "authenticode": False,
@@ -1172,6 +1178,211 @@ def _validation_mutex_residue() -> int:
     return int(existed)
 
 
+def _configuration_check_receipt(
+    executable: Path,
+    *,
+    deployment: str,
+    psutil_module: object,
+    expected_size: int,
+    expected_sha256: str,
+) -> dict[str, object]:
+    if deployment not in {"installed", "portable"}:
+        raise CandidateError("configuration deployment is not reviewed")
+    with tempfile.TemporaryDirectory(
+        prefix="rcm-preview-configuration-"
+    ) as temporary:
+        root = Path(temporary)
+        if _is_link_or_reparse(root):
+            raise CandidateError("configuration root is not regular")
+        temp_root = root / "onefile-temp"
+        temp_root.mkdir()
+        if deployment == "portable":
+            run_root = root / "portable"
+            run_root.mkdir()
+            candidate = run_root / "candidate.exe"
+            shutil.copyfile(executable, candidate)
+            config_path = run_root / "data" / "config.json"
+        else:
+            candidate = executable
+            local_root = root / "local-app-data"
+            config_path = local_root / "RayClusterManager" / "config.json"
+        if (
+            candidate.stat().st_size != expected_size
+            or _sha256(candidate) != expected_sha256
+        ):
+            raise CandidateError("configuration candidate identity changed")
+        base_environment = {
+            key: os.environ.get(key, "")
+            for key in (
+                "COMSPEC",
+                "PATH",
+                "PATHEXT",
+                "SYSTEMROOT",
+                "USERPROFILE",
+                "WINDIR",
+            )
+        }
+        base_environment.update({
+            "PYTHONHASHSEED": "0",
+            "PYTHONNOUSERSITE": "1",
+            "RCM_INTERNAL_CONFIGURATION_CHECK": "1",
+            "RCM_NETWORK_POLICY": "deny",
+            "TEMP": str(temp_root),
+            "TMP": str(temp_root),
+        })
+        if deployment == "portable":
+            base_environment["RCM_PORTABLE"] = "1"
+        else:
+            base_environment["LOCALAPPDATA"] = str(local_root)
+        maximum_connections = 0
+        maximum_listeners = 0
+        maximum_descendants = 0
+        all_residue: set[int] = set()
+        exit_codes: list[int] = []
+
+        for expectation in ("create", "reload"):
+            environment = dict(base_environment)
+            environment["RCM_CONFIGURATION_EXPECT"] = expectation
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            process: subprocess.Popen[bytes] | None = None
+            try:
+                process = subprocess.Popen(
+                    (str(candidate), "--internal-configuration-check"),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    env=environment,
+                    creationflags=flags,
+                )
+                root_process = psutil_module.Process(process.pid)
+                root_identity = _process_identity(root_process)
+                _require_candidate_image(root_process, candidate)
+            except Exception as exc:
+                if process is not None:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
+                raise CandidateError(
+                    "unable to start packaged configuration check"
+                ) from exc
+            observed_processes: dict[int, object] = {
+                process.pid: root_process
+            }
+            observed_identities = {root_identity[0]: root_identity[1]}
+            bound_child: tuple[int, float] | None = None
+            try:
+                deadline = time.monotonic() + 15.0
+                while process.poll() is None:
+                    if time.monotonic() >= deadline:
+                        raise CandidateError(
+                            "packaged configuration check timed out"
+                        )
+                    try:
+                        descendants = root_process.children(recursive=True)
+                    except (
+                        psutil_module.NoSuchProcess,
+                        psutil_module.ZombieProcess,
+                    ):
+                        descendants = []
+                    except psutil_module.AccessDenied as exc:
+                        raise CandidateError(
+                            "configuration process observation was denied"
+                        ) from exc
+                    active, bound_child = _approved_onefile_processes(
+                        root_process,
+                        descendants,
+                        executable=candidate,
+                        root_identity=root_identity,
+                        bound_child=bound_child,
+                    )
+                    connections, listeners = _network_counts(
+                        active,
+                        psutil_module,
+                    )
+                    maximum_connections = max(maximum_connections, connections)
+                    maximum_listeners = max(maximum_listeners, listeners)
+                    maximum_descendants = max(
+                        maximum_descendants,
+                        len(active) - 1,
+                    )
+                    for item in active:
+                        identity = _process_identity(item)
+                        observed_processes[identity[0]] = item
+                        observed_identities[identity[0]] = identity[1]
+                    time.sleep(0.02)
+                process.communicate(timeout=5)
+            except BaseException as exc:
+                _terminate_tree(
+                    process,
+                    root_process,
+                    psutil_module,
+                    observed_processes,
+                )
+                raise CandidateError(
+                    "packaged configuration check failed"
+                ) from exc
+            residue = _await_no_residue(observed_identities, psutil_module)
+            all_residue.update(residue)
+            if process.returncode != 0 or residue:
+                raise CandidateError(
+                    "packaged configuration check did not exit cleanly"
+                )
+            exit_codes.append(int(process.returncode))
+            if expectation == "create":
+                if not config_path.is_file() or config_path.is_symlink():
+                    raise CandidateError(
+                        "packaged configuration was not created"
+                    )
+                created_bytes = config_path.read_bytes()
+            elif config_path.read_bytes() != created_bytes:
+                raise CandidateError(
+                    "packaged configuration reload changed bytes"
+                )
+        temporary_residue = sum(1 for item in temp_root.rglob("*") if item)
+        if (
+            maximum_connections
+            or maximum_listeners
+            or maximum_descendants != 1
+            or all_residue
+            or temporary_residue
+        ):
+            raise CandidateError(
+                "packaged configuration observation left a side effect"
+            )
+        return {
+            "deployment": deployment,
+            "create_exit_code": exit_codes[0],
+            "reload_exit_code": exit_codes[1],
+            "generation": 1,
+            "config_size": len(created_bytes),
+            "config_sha256": hashlib.sha256(created_bytes).hexdigest(),
+            "maximum_network_connections": maximum_connections,
+            "maximum_network_listeners": maximum_listeners,
+            "maximum_descendants": maximum_descendants,
+            "process_residue": len(all_residue),
+            "temporary_artifact_residue": temporary_residue,
+        }
+
+
+def _configuration_checks(
+    executable: Path,
+    *,
+    psutil_module: object,
+    expected_size: int,
+    expected_sha256: str,
+) -> dict[str, object]:
+    return {
+        deployment: _configuration_check_receipt(
+            executable,
+            deployment=deployment,
+            psutil_module=psutil_module,
+            expected_size=expected_size,
+            expected_sha256=expected_sha256,
+        )
+        for deployment in ("installed", "portable")
+    }
+
+
 def _run_once(
     executable: Path,
     *,
@@ -1452,6 +1663,7 @@ def _evidence_value(
     *,
     manifest: Mapping[str, object],
     receipts: list[dict[str, object]],
+    configuration_checks: Mapping[str, object],
     vendor_bytes: int,
     residue_count: int,
 ) -> dict[str, object]:
@@ -1464,7 +1676,7 @@ def _evidence_value(
         for name, assertion in CLAIM_ASSERTIONS.items()
     }
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "candidate": manifest["candidate"],
         "source": manifest["source"],
         "lifecycle": {
@@ -1500,6 +1712,7 @@ def _evidence_value(
                 int(item["mutex_residue"]) for item in receipts
             ),
             "vendor_bytes": vendor_bytes,
+            "configuration_checks": dict(configuration_checks),
             "claims": claims,
             "blockers": [],
         },
@@ -1529,7 +1742,7 @@ def _validate_frozen_evidence(
     if (
         set(value)
         != {"schema_version", "candidate", "source", "lifecycle", "observations"}
-        or value.get("schema_version") != 5
+        or value.get("schema_version") != 6
         or value.get("candidate") != manifest["candidate"]
         or value.get("source") != manifest["source"]
     ):
@@ -1616,6 +1829,56 @@ def _validate_frozen_evidence(
         name: dict(assertion)
         for name, assertion in CLAIM_ASSERTIONS.items()
     }
+    configuration_checks = (
+        observations.get("configuration_checks")
+        if isinstance(observations, dict)
+        else None
+    )
+    if (
+        not isinstance(configuration_checks, dict)
+        or set(configuration_checks) != {"installed", "portable"}
+    ):
+        raise CandidateError("frozen configuration evidence is incomplete")
+    configuration_fields = {
+        "deployment",
+        "create_exit_code",
+        "reload_exit_code",
+        "generation",
+        "config_size",
+        "config_sha256",
+        "maximum_network_connections",
+        "maximum_network_listeners",
+        "maximum_descendants",
+        "process_residue",
+        "temporary_artifact_residue",
+    }
+    for deployment, receipt in configuration_checks.items():
+        if (
+            not isinstance(receipt, dict)
+            or set(receipt) != configuration_fields
+            or receipt.get("deployment") != deployment
+            or any(
+                type(receipt.get(name)) is not int
+                for name in configuration_fields - {
+                    "deployment",
+                    "config_sha256",
+                }
+            )
+            or receipt.get("create_exit_code") != 0
+            or receipt.get("reload_exit_code") != 0
+            or receipt.get("generation") != 1
+            or not 1 <= int(receipt.get("config_size", 0)) <= 1_000_000
+            or not isinstance(receipt.get("config_sha256"), str)
+            or SHA256.fullmatch(str(receipt.get("config_sha256"))) is None
+            or receipt.get("maximum_network_connections") != 0
+            or receipt.get("maximum_network_listeners") != 0
+            or receipt.get("maximum_descendants") != 1
+            or receipt.get("process_residue") != 0
+            or receipt.get("temporary_artifact_residue") != 0
+        ):
+            raise CandidateError(
+                "frozen configuration evidence assertion failed"
+            )
     expected_observations = {
         "maximum_ready_ms": max(int(item["ready_ms"]) for item in receipts),
         "maximum_duration_ms": max(
@@ -1628,6 +1891,7 @@ def _validate_frozen_evidence(
         "temporary_artifact_residue": 0,
         "mutex_residue": 0,
         "vendor_bytes": vendor_bytes,
+        "configuration_checks": configuration_checks,
         "claims": complete_claims,
         "blockers": [],
     }
@@ -1703,6 +1967,12 @@ def verify(
                 must_exist=False,
             )
         psutil_module = _load_psutil()
+        configuration_checks = _configuration_checks(
+            executable,
+            psutil_module=psutil_module,
+            expected_size=int(contract["size"]),
+            expected_sha256=str(contract["sha256"]),
+        )
         receipts: list[dict[str, object]] = []
         residue: set[int] = set()
         for scenario, count in SCENARIO_COUNTS.items():
@@ -1721,6 +1991,7 @@ def verify(
     evidence_value = _evidence_value(
         manifest=manifest,
         receipts=receipts,
+        configuration_checks=configuration_checks,
         vendor_bytes=vendor_bytes,
         residue_count=len(residue),
     )
