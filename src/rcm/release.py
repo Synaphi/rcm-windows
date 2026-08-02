@@ -116,8 +116,8 @@ class ReleaseIdentity:
 
         expected_windows = (
             PRODUCT_MAJOR,
-            self.release_date.year,
-            self.release_date.month * 100 + self.release_date.day,
+            self.release_date.month,
+            self.release_date.day,
             revision_number if self.kind is ReleaseKind.FORMAL else 0,
         )
         if self.windows_tuple != expected_windows:
@@ -130,11 +130,7 @@ class ReleaseIdentity:
         date_token = self.release_date.isoformat()
         if self.kind is ReleaseKind.FORMAL:
             expected_id = f"rcm-{PRODUCT_MAJOR}-{date_token}-{self.revision}"
-            expected_tag = (
-                f"v{PRODUCT_MAJOR}.{self.release_date.year:04d}."
-                f"{self.release_date.month:02d}.{self.release_date.day:02d}"
-                f"{self.revision}"
-            )
+            expected_tag = f"v{self.display_version}"
             if self.release_id != expected_id or self.tag != expected_tag:
                 raise ValueError("formal release ID or tag is not canonical")
             if self.sequence != _sequence(self.release_date, revision_number):
@@ -200,8 +196,8 @@ class ReleaseIdentityService:
         display = _display(released, revision)
         windows_tuple = (
             PRODUCT_MAJOR,
-            released.year,
-            released.month * 100 + released.day,
+            released.month,
+            released.day,
             revision_number if kind is ReleaseKind.FORMAL else 0,
         )
         if kind is ReleaseKind.FORMAL:
@@ -210,10 +206,7 @@ class ReleaseIdentityService:
             release_id = (
                 f"rcm-{PRODUCT_MAJOR}-{released.isoformat()}-{revision}"
             )
-            tag = (
-                f"v{PRODUCT_MAJOR}.{released.year:04d}.{released.month:02d}."
-                f"{released.day:02d}{revision}"
-            )
+            tag = f"v{display}"
             sequence: int | None = _sequence(released, revision_number)
             normalized_commit = None
         else:

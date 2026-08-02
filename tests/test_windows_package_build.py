@@ -162,7 +162,15 @@ class WindowsPackageBuildTests(unittest.TestCase):
             package_build.hashlib.sha256(version_data).hexdigest(),
             version_digest,
         )
-        self.assertIn(b"filevers=(2, 2026, 802, 1)", version_data)
+        self.assertIn(b"filevers=(2, 8, 2, 1)", version_data)
+        self.assertIn(
+            b"FileVersion', '2.' + '8.' + '2.' + '1'",
+            version_data,
+        )
+        self.assertIn(
+            b"OriginalFilename', 'RCM-2.08.02a-windows-x64.exe'",
+            version_data,
+        )
         self.assertIn(b"ProductVersion', '2.08.02a'", version_data)
 
     def test_offline_child_guard_remains_subclass_compatible(self) -> None:

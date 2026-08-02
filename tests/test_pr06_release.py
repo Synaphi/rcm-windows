@@ -23,24 +23,27 @@ class ReleaseIdentityTests(unittest.TestCase):
         identity = self.service.create(date(2026, 7, 29), "a")
         self.assertEqual("2.07.29a", identity.display_version)
         self.assertEqual("rcm-2-2026-07-29-a", identity.release_id)
-        self.assertEqual("v2.2026.07.29a", identity.tag)
+        self.assertEqual("v2.07.29a", identity.tag)
         self.assertEqual(2026072901, identity.sequence)
-        self.assertEqual((2, 2026, 729, 1), identity.windows_tuple)
-        self.assertEqual("2.2026.729.1", identity.windows_version)
+        self.assertEqual((2, 7, 29, 1), identity.windows_tuple)
+        self.assertEqual(
+            ".".join(map(str, (2, 7, 29, 1))),
+            identity.windows_version,
+        )
         self.assertTrue(identity.formal)
         self.assertEqual(
-            [2, 2026, 729, 1],
+            [2, 7, 29, 1],
             identity.to_dict()["windows_tuple"],
         )
         with self.assertRaises(FrozenInstanceError):
             identity.tag = "changed"  # type: ignore[misc]
 
-    def test_display_can_repeat_next_year_but_identity_never_does(self) -> None:
+    def test_tag_can_repeat_next_year_but_internal_identity_never_does(self) -> None:
         first = self.service.create(date(2026, 7, 29), "a")
         second = self.service.create(date(2027, 7, 29), "a")
         self.assertEqual(first.display_version, second.display_version)
         self.assertNotEqual(first.release_id, second.release_id)
-        self.assertNotEqual(first.tag, second.tag)
+        self.assertEqual(first.tag, second.tag)
         self.assertNotEqual(first.sequence, second.sequence)
         self.assertEqual(-1, first.compare(second))
         self.assertEqual(1, second.compare(first))
@@ -123,7 +126,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         self.assertFalse(snapshot.formal)
         self.assertIsNone(snapshot.tag)
         self.assertIsNone(snapshot.sequence)
-        self.assertEqual((2, 2026, 729, 0), snapshot.windows_tuple)
+        self.assertEqual((2, 7, 29, 0), snapshot.windows_tuple)
         self.assertIn(f"snapshot-2026-07-29-a-{commit}", snapshot.release_id)
         self.assertNotEqual(formal.release_id, snapshot.release_id)
         self.assertNotIn(commit, str(snapshot.to_dict()))
@@ -177,10 +180,10 @@ class ReleaseIdentityTests(unittest.TestCase):
         identity = self.service.create(date(2026, 7, 29), "a")
         mutations = (
             {"release_id": "not-canonical"},
-            {"tag": "v2.2026.07.29b"},
+            {"tag": "v2.07.29b"},
             {"sequence": 2026072902},
-            {"windows_tuple": (2, 2026, 729, 2)},
-            {"windows_version": "2.2026.729.2"},
+            {"windows_tuple": (2, 7, 29, 2)},
+            {"windows_version": ".".join(map(str, (2, 7, 29, 2)))},
         )
         for changes in mutations:
             with self.subTest(changes=changes):

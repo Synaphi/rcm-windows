@@ -436,14 +436,16 @@ def _load_contract(root: Path) -> dict[str, object]:
         raise CandidateError("tracked bundle contract schema is not exact")
     if bundle.get("release") != {
         "channel": "preview",
-        "package_version": "2.2026.8.2a1",
+        "package_version": "2.8.2a1",
         "display_version": "2.08.02a",
         "release_id": "rcm-2-2026-08-02-a",
-        "tag": "v2.2026.08.02a",
+        "tag": "v2.08.02a",
         "sequence": 2026080201,
-        "asset": "RCM-2.2026.08.02a-windows-x64.exe",
-        "windows_version": "2.2026.802.1",
-        "windows_tuple": [2, 2026, 802, 1],
+        "asset": "RCM-2.08.02a-windows-x64.exe",
+        "windows_version": ".".join(
+            str(part) for part in (2, 8, 2, 1)
+        ),
+        "windows_tuple": [2, 8, 2, 1],
         "architecture": "x86_64",
         "prerelease": True,
         "authenticode": False,

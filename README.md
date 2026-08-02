@@ -9,7 +9,7 @@ GitHub prerelease, when published, is an unsigned standalone executable rather
 than an installer. Windows may show an unrecognized-publisher warning. The
 preview is not a signed, stable, supported, or fleet-ready release.
 
-The first preview identity is `2.08.02a` (`v2.2026.08.02a`). Its exact asset
+The first preview identity is `2.08.02a` (`v2.08.02a`). Its exact asset
 name and verified checksum are published with the GitHub prerelease; do not use
 an executable whose name or SHA-256 differs from that release record.
 

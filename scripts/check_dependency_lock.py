@@ -501,7 +501,7 @@ def pyproject_issues(data: object) -> list[str]:
         return ["pyproject project and build-system tables are required"]
     if project.get("name") != "ray-cluster-manager":
         issues.append("pyproject project name is not exact")
-    if project.get("version") != "2.2026.8.2a1":
+    if project.get("version") != "2.8.2a1":
         issues.append("pyproject foundation version is not exact")
     if project.get("requires-python") != ">=3.12":
         issues.append("pyproject Python floor is not exact")

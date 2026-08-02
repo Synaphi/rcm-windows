@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ray-cluster-manager"
-version = "2.2026.8.2a1"
+version = "2.8.2a1"
 description = "RayClusterManager 2.x application foundation"
 readme = "README.md"
 license = "Apache-2.0"
