@@ -9,7 +9,7 @@
     {
       "id": "nodes",
       "title": "Nodes",
-      "body": "This preview validates node records from the local config.json file at startup. The packaged Settings surface is currently read-only. Use Quit from the notification-area tray icon (the window close button only hides RCM), then rerun it with --configure to change supported local fields. Keep real topology out of source control."
+      "body": "This source validates node records from the local config.json file at startup. The packaged Settings surface is currently read-only. Use Quit from the notification-area tray icon (the window close button only hides RCM), then rerun it with --configure to change supported local fields. The development wizard can explicitly import one selected RCM 1.x config after showing its schema, SHA-256, and value-free field counts. It preserves the 1.x bytes, rejects secret material without echo, does not migrate RDP user names or retired remote authority, and keeps a generation-bound rollback. This import is not part of the published v2.08.03b executable. Keep real topology out of source control."
     },
     {
       "id": "rdp",

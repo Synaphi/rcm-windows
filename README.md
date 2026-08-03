@@ -18,6 +18,12 @@ The `v2.08.03b` preview composes the personal-use outbound RDP client described
 below. Older assets, including `v2.08.03a`, do not contain that composed RDP
 flow. Always match the executable, tag, release notes, size, and SHA-256.
 
+The current development branch has moved beyond the published `v2.08.03b`
+bytes. In particular, its setup source includes the original-preserving 1.x
+import described below. That behavior is not present in the `v2.08.03b`
+download and will not be attributed to a packaged build until a new prerelease
+has its own tag, executable, checksum, and lifecycle evidence.
+
 ## What the packaged preview currently does
 
 The executable currently provides:
@@ -170,6 +176,40 @@ source control and public issues. Repository examples and tests use only
 reserved documentation addresses such as `192.0.2.0/24` and synthetic names.
 The local HTTP boundary, when composed in a later preview, must remain on
 `127.0.0.1`.
+
+### Import an RCM 1.x configuration
+
+The development setup wizard offers **Import from RCM 1.x** only after the user
+selects that action. Quit both versions first; the window close button may only
+hide either application in the notification area. The wizard suggests
+`%APPDATA%\RayClusterManager\config.json` but does not scan for or read it in
+the background. A different source must be an explicitly selected local,
+regular file. Installed and portable 2.x destinations remain separate.
+
+Before confirmation, the wizard shows the source path, schema, SHA-256,
+supported node routing preview, and separate value-free mapped, skipped, and
+rejected field summaries. It then re-reads the source, requires the same bytes,
+stores only supported typed fields through the generation/checksum transaction,
+reloads the result, and checks the source again. Existing 2.x sections with no
+equivalent imported field remain unchanged. The wizard never renames, rewrites,
+schema-upgrades, or deletes the 1.x file. Repeating an identical import is a
+no-op and does not advance the destination generation.
+
+Raw password, token, key, or credential material rejects the whole import
+without echoing its value. RDP user names and credential references,
+controller/trust lists, update or executable paths, and retired remote
+repair/update/password/cluster authority are not imported. Safe node routing,
+local role/address/CPU data, Ray head and port settings, and semantically
+matching local preferences are eligible; importing settings never starts Ray,
+launches RDP, opens a listener, elevates, or contacts another PC.
+
+When an import changes 2.x state, the existing authenticated generation is
+retained as the store backup and a value-free receipt binds the new generation
+to that backup. **Rollback last 1.x import** is accepted only while that exact
+imported generation and backup still match; any intervening configuration save
+fails closed instead of guessing. Rollback writes the old configuration as a
+new monotonic generation and removes only the import receipt. Keep both
+versions side by side and use tray **Quit** before switching back to 1.x.
 
 If local configuration becomes unreadable, use tray **Quit** first, then move
 the applicable whole state folder to a recovery folder: installed

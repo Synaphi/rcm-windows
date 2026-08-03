@@ -64,6 +64,8 @@ class _MemoryFilesystem:
     def write_bytes(self, path: Path, data: bytes) -> None:
         key = self._key(path)
         self._event("write_bytes", key)
+        if key in self.files:
+            raise FileExistsError(key)
         self.files[key] = bytes(data)
 
     def fsync_file(self, path: Path) -> None:
@@ -203,6 +205,42 @@ class ConfigStoreTests(unittest.TestCase):
         )
         self.assertEqual((), filesystem.transaction_residue())
 
+    def test_transaction_identity_authenticates_rollback_ownership(self) -> None:
+        store, filesystem = self.make_store()
+        previous = store.save(_named("Previous"), expected_generation=0)
+        transaction_id = "a" * 64
+        imported = store.save(
+            _named("Imported"),
+            expected_generation=1,
+            transaction_id=transaction_id,
+        )
+
+        self.assertEqual(transaction_id, imported.transaction_id)
+        self.assertEqual(transaction_id, store.load().transaction_id)
+        current_record = json.loads(filesystem.files[str(store.path)])
+        self.assertEqual(transaction_id, current_record["transaction_id"])
+        before = dict(filesystem.files)
+        with self.assertRaises(ConfigConflictError):
+            store.rollback_previous(
+                expected_current_generation=imported.generation,
+                expected_backup_generation=previous.generation,
+                expected_backup_checksum=previous.checksum,
+                expected_current_transaction_id="b" * 64,
+            )
+        self.assertEqual(before, filesystem.files)
+
+        restored = store.rollback_previous(
+            expected_current_generation=imported.generation,
+            expected_backup_generation=previous.generation,
+            expected_backup_checksum=previous.checksum,
+            expected_current_transaction_id=transaction_id,
+        )
+        self.assertIsNone(restored.transaction_id)
+        self.assertEqual((3, "Previous"), (
+            restored.generation,
+            restored.config.app.name,
+        ))
+
     def test_generation_conflict_does_not_write(self) -> None:
         store, filesystem = self.make_store()
         store.save(_named("Old"), expected_generation=0)
@@ -213,6 +251,110 @@ class ConfigStoreTests(unittest.TestCase):
 
         self.assertEqual(before, filesystem.files)
         self.assertEqual("Old", store.load().config.app.name)
+
+    def test_authenticated_previous_rollback_commits_a_new_generation(self) -> None:
+        store, filesystem = self.make_store()
+        previous = store.save(_named("Previous"), expected_generation=0)
+        current = store.save(_named("Imported"), expected_generation=1)
+
+        rolled_back = store.rollback_previous(
+            expected_current_generation=current.generation,
+            expected_backup_generation=previous.generation,
+            expected_backup_checksum=previous.checksum,
+        )
+
+        self.assertEqual((3, "Previous"), (
+            rolled_back.generation,
+            rolled_back.config.app.name,
+        ))
+        self.assertEqual(previous.checksum, rolled_back.checksum)
+        self.assertEqual(rolled_back, store.load(require_existing=True))
+        target = json.loads(filesystem.files[str(store.path)])
+        backup = json.loads(filesystem.files[str(store.backup_path)])
+        self.assertEqual((3, "Previous"), (
+            target["generation"],
+            target["config"]["app"]["name"],
+        ))
+        self.assertEqual((1, "Previous"), (
+            backup["generation"],
+            backup["config"]["app"]["name"],
+        ))
+        self.assertEqual(
+            {str(store.path), str(store.backup_path)},
+            set(filesystem.files),
+        )
+        self.assertEqual((), filesystem.transaction_residue())
+
+    def test_rollback_receipt_validation_happens_before_filesystem_access(self) -> None:
+        invalid = (
+            {
+                "expected_current_generation": 0,
+                "expected_backup_generation": 1,
+                "expected_backup_checksum": "0" * 64,
+            },
+            {
+                "expected_current_generation": 2,
+                "expected_backup_generation": False,
+                "expected_backup_checksum": "0" * 64,
+            },
+            {
+                "expected_current_generation": 2,
+                "expected_backup_generation": 1,
+                "expected_backup_checksum": "A" * 64,
+            },
+        )
+        for arguments in invalid:
+            with self.subTest(arguments=arguments):
+                store, filesystem = self.make_store()
+                with self.assertRaises(ValueError):
+                    store.rollback_previous(**arguments)
+                self.assertEqual([], filesystem.events)
+                self.assertEqual({}, filesystem.files)
+
+    def test_rollback_absent_corrupt_and_mismatched_backup_do_not_write(self) -> None:
+        cases = (
+            ("generation_conflict", ConfigConflictError),
+            ("absent", ConfigCorruptError),
+            ("corrupt", ConfigCorruptError),
+            ("generation_receipt", ConfigConflictError),
+            ("checksum_receipt", ConfigConflictError),
+            ("not_previous", ConfigConflictError),
+        )
+        for case, error_type in cases:
+            with self.subTest(case=case):
+                store, filesystem = self.make_store()
+                previous = store.save(_named("Previous"), expected_generation=0)
+                current = store.save(_named("Imported"), expected_generation=1)
+                arguments = {
+                    "expected_current_generation": current.generation,
+                    "expected_backup_generation": previous.generation,
+                    "expected_backup_checksum": previous.checksum,
+                }
+                if case == "generation_conflict":
+                    arguments["expected_current_generation"] = 1
+                elif case == "absent":
+                    del filesystem.files[str(store.backup_path)]
+                elif case == "corrupt":
+                    filesystem.files[str(store.backup_path)] = b"not json"
+                elif case == "generation_receipt":
+                    arguments["expected_backup_generation"] = 2
+                elif case == "checksum_receipt":
+                    arguments["expected_backup_checksum"] = "0" * 64
+                elif case == "not_previous":
+                    filesystem.files[str(store.backup_path)] = (
+                        filesystem.files[str(store.path)]
+                    )
+                    arguments["expected_backup_generation"] = 2
+                    arguments["expected_backup_checksum"] = current.checksum
+                before = dict(filesystem.files)
+                filesystem.mutation_count = 0
+
+                with self.assertRaises(error_type):
+                    store.rollback_previous(**arguments)
+
+                self.assertEqual(0, filesystem.mutation_count)
+                self.assertEqual(before, filesystem.files)
+                self.assertEqual((), filesystem.transaction_residue())
 
     def test_each_transaction_phase_recovers_to_exactly_old_or_new(self) -> None:
         self.assertEqual(
@@ -278,6 +420,64 @@ class ConfigStoreTests(unittest.TestCase):
                 self.assertIn(
                     (loaded.generation, loaded.config.app.name),
                     {(1, "Old"), (2, "New")},
+                )
+                self.assertEqual((), filesystem.transaction_residue())
+
+    def test_every_rollback_mutation_failure_preserves_old_or_new_and_cleans(
+        self,
+    ) -> None:
+        baseline_fs = _MemoryFilesystem()
+        baseline, _ = self.make_store(baseline_fs)
+        previous = baseline.save(_named("Previous"), expected_generation=0)
+        current = baseline.save(_named("Imported"), expected_generation=1)
+        baseline_fs.mutation_count = 0
+        baseline.rollback_previous(
+            expected_current_generation=current.generation,
+            expected_backup_generation=previous.generation,
+            expected_backup_checksum=previous.checksum,
+        )
+        mutation_total = baseline_fs.mutation_count
+        self.assertGreater(mutation_total, 10)
+
+        for fail_at in range(1, mutation_total + 1):
+            with self.subTest(fail_at=fail_at):
+                filesystem = _MemoryFilesystem()
+                store, _ = self.make_store(filesystem)
+                previous = store.save(
+                    _named("Previous"),
+                    expected_generation=0,
+                )
+                current = store.save(
+                    _named("Imported"),
+                    expected_generation=1,
+                )
+                filesystem.mutation_count = 0
+                filesystem.fail_mutation = fail_at
+                try:
+                    store.rollback_previous(
+                        expected_current_generation=current.generation,
+                        expected_backup_generation=previous.generation,
+                        expected_backup_checksum=previous.checksum,
+                    )
+                except ConfigIOError:
+                    pass
+                filesystem.fail_mutation = None
+
+                recovered, _ = self.make_store(filesystem)
+                loaded = recovered.load(require_existing=True)
+                self.assertIn(
+                    (loaded.generation, loaded.config.app.name),
+                    {(2, "Imported"), (3, "Previous")},
+                )
+                backup_store = ConfigStore(
+                    recovered.backup_path,
+                    filesystem=filesystem,
+                    lock=_Lock(),
+                )
+                backup = backup_store.load(require_existing=True)
+                self.assertEqual(
+                    (1, "Previous"),
+                    (backup.generation, backup.config.app.name),
                 )
                 self.assertEqual((), filesystem.transaction_residue())
 
@@ -372,6 +572,42 @@ class ConfigStoreTests(unittest.TestCase):
             self.assertEqual(second, loaded)
             self.assertTrue(path.exists())
             self.assertTrue(store.backup_path.exists())
+            self.assertFalse(store.temp_path.exists())
+            self.assertFalse(store.journal_path.exists())
+            self.assertFalse(store.journal_temp_path.exists())
+            self.assertFalse(store.backup_temp_path.exists())
+
+    def test_real_path_rollback_leaves_current_backup_and_persistent_lock_only(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested" / "config.json"
+            store = ConfigStore(path)
+            previous = store.save(_named("Previous"), expected_generation=0)
+            current = store.save(_named("Imported"), expected_generation=1)
+
+            rolled_back = store.rollback_previous(
+                expected_current_generation=current.generation,
+                expected_backup_generation=previous.generation,
+                expected_backup_checksum=previous.checksum,
+            )
+            reloaded = store.load(require_existing=True)
+
+            self.assertEqual(rolled_back, reloaded)
+            self.assertEqual((3, "Previous"), (
+                reloaded.generation,
+                reloaded.config.app.name,
+            ))
+            backup = json.loads(store.backup_path.read_bytes())
+            self.assertEqual((1, "Previous"), (
+                backup["generation"],
+                backup["config"]["app"]["name"],
+            ))
+            self.assertEqual(
+                {"config.json", "config.json.bak", "config.json.lock"},
+                {item.name for item in path.parent.iterdir()},
+            )
+            self.assertTrue(store.lock_path.is_file())
             self.assertFalse(store.temp_path.exists())
             self.assertFalse(store.journal_path.exists())
             self.assertFalse(store.journal_temp_path.exists())

@@ -8,7 +8,7 @@ transaction boundary can be tested without using a real user profile.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import errno
 import hashlib
 import os
@@ -119,7 +119,7 @@ class PathFilesystem:
     def write_bytes(self, path: Path, data: bytes) -> None:
         if type(data) is not bytes:
             raise TypeError("data must be bytes")
-        with path.open("wb") as stream:
+        with path.open("xb") as stream:
             stream.write(data)
             stream.flush()
 
@@ -240,6 +240,7 @@ class StoredConfig:
     config: Config
     generation: int
     checksum: str
+    transaction_id: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,18 +280,25 @@ def _is_checksum(value: object) -> bool:
     )
 
 
-def _record_bytes(config: Config, generation: int) -> bytes:
+def _record_bytes(
+    config: Config,
+    generation: int,
+    transaction_id: str | None = None,
+) -> bytes:
     if type(generation) is not int or not 1 <= generation <= _MAX_GENERATION:
         raise ConfigGenerationError("generation is outside the supported range")
+    if transaction_id is not None and not _is_checksum(transaction_id):
+        raise ValueError("transaction_id must be a lowercase SHA-256")
     payload = canonical_config_bytes(config)
-    return canonical_json_bytes(
-        {
-            "store_version": STORE_VERSION,
-            "generation": generation,
-            "checksum": _sha256(payload),
-            "config": config_to_dict(config),
-        }
-    )
+    record: dict[str, object] = {
+        "store_version": STORE_VERSION,
+        "generation": generation,
+        "checksum": _sha256(payload),
+        "config": config_to_dict(config),
+    }
+    if transaction_id is not None:
+        record["transaction_id"] = transaction_id
+    return canonical_json_bytes(record)
 
 
 def _decode_record(raw: bytes, *, source: str) -> _Record:
@@ -298,18 +306,28 @@ def _decode_record(raw: bytes, *, source: str) -> _Record:
         value = decode_json_bytes(raw, max_bytes=MAX_RECORD_BYTES)
         if not isinstance(value, Mapping):
             raise ConfigValidationError("", "record must be an object")
-        expected = {"store_version", "generation", "checksum", "config"}
-        if set(value) != expected:
+        required = {"store_version", "generation", "checksum", "config"}
+        valid_key_sets = {
+            frozenset(required),
+            frozenset(required | {"transaction_id"}),
+        }
+        if set(value) not in valid_key_sets:
             raise ConfigValidationError("", "record keys do not match the storage format")
         version = value["store_version"]
         generation = value["generation"]
         checksum = value["checksum"]
+        transaction_id = value.get("transaction_id")
         if type(version) is not int or version != STORE_VERSION:
             raise ConfigValidationError("store_version", "unsupported storage version")
         if type(generation) is not int or not 1 <= generation <= _MAX_GENERATION:
             raise ConfigGenerationError("stored generation is invalid")
         if not _is_checksum(checksum):
             raise ConfigValidationError("checksum", "must be a lowercase SHA-256")
+        if transaction_id is not None and not _is_checksum(transaction_id):
+            raise ConfigValidationError(
+                "transaction_id",
+                "must be a lowercase SHA-256",
+            )
         config = config_from_dict(value["config"])
         actual = _sha256(canonical_config_bytes(config))
         if actual != checksum:
@@ -319,7 +337,12 @@ def _decode_record(raw: bytes, *, source: str) -> _Record:
     except ConfigError as exc:
         raise ConfigCorruptError(f"{source} is corrupt: {exc}") from exc
     return _Record(
-        stored=StoredConfig(config=config, generation=generation, checksum=checksum),
+        stored=StoredConfig(
+            config=config,
+            generation=generation,
+            checksum=checksum,
+            transaction_id=transaction_id,
+        ),
         raw=raw,
         raw_checksum=_sha256(raw),
     )
@@ -558,11 +581,132 @@ class ConfigStore:
             raise _map_os_error(exc) from exc
         return self._under_lock(operation)
 
+    @staticmethod
+    def _expected_generation(value: object, *, label: str) -> int:
+        if type(value) is not int or not 1 <= value <= _MAX_GENERATION:
+            raise ValueError(f"{label} is outside the supported range")
+        return value
+
+    def _commit_locked(
+        self,
+        config: Config,
+        old: _Record | None,
+        transaction_id: str | None,
+    ) -> StoredConfig:
+        old_generation = old.stored.generation if old is not None else 0
+        if old_generation >= _MAX_GENERATION:
+            raise ConfigGenerationError("configuration generation is exhausted")
+
+        new_generation = old_generation + 1
+        new_raw = _record_bytes(config, new_generation, transaction_id)
+        new_checksum = _sha256(new_raw)
+        old_checksum = old.raw_checksum if old is not None else None
+
+        if old is not None:
+            self._write_synced(self.backup_temp_path, old.raw)
+            self._replace_synced(self.backup_temp_path, self.backup_path)
+        elif self._exists(self.backup_path):
+            self._unlink(self.backup_path)
+            self._fs.fsync_directory(self.path.parent)
+        self._checkpoint("backup_durable")
+
+        self._write_synced(self.temp_path, new_raw)
+        self._checkpoint("new_staged")
+
+        journal = _Journal(
+            phase="prepared",
+            old_generation=old_generation,
+            old_record_checksum=old_checksum,
+            new_generation=new_generation,
+            new_record_checksum=new_checksum,
+        )
+        self._write_journal(journal)
+        self._checkpoint("journal_prepared")
+
+        # Detect writers that ignore the shared lock before the commit point.
+        current_raw = self._read(self.path) if self._exists(self.path) else None
+        if current_raw != (old.raw if old is not None else None):
+            self._clean_transaction_residue()
+            raise ConfigConflictError("configuration changed during transaction")
+
+        self._replace_synced(self.temp_path, self.path)
+        self._checkpoint("target_replaced")
+
+        self._write_journal(journal.with_phase("replaced"))
+        self._checkpoint("journal_replaced")
+        self._write_journal(journal.with_phase("committed"))
+        self._checkpoint("journal_committed")
+
+        self._clean_transaction_residue()
+        self._checkpoint("cleanup_complete")
+        return StoredConfig(
+            config=config,
+            generation=new_generation,
+            checksum=_sha256(canonical_config_bytes(config)),
+            transaction_id=transaction_id,
+        )
+
+    def _commit_rollback_locked(
+        self,
+        config: Config,
+        current: _Record,
+        backup: _Record,
+    ) -> StoredConfig:
+        """Commit a rollback without overwriting its recovery source first."""
+
+        if current.stored.generation >= _MAX_GENERATION:
+            raise ConfigGenerationError("configuration generation is exhausted")
+        new_generation = current.stored.generation + 1
+        new_raw = _record_bytes(config, new_generation)
+        journal = _Journal(
+            phase="prepared",
+            old_generation=current.stored.generation,
+            old_record_checksum=current.raw_checksum,
+            new_generation=new_generation,
+            new_record_checksum=_sha256(new_raw),
+        )
+
+        # The authenticated pre-import backup remains untouched until the new
+        # current record is durable.  An interruption therefore cannot destroy
+        # the only recovery source while the imported record is still current.
+        self._checkpoint("backup_durable")
+        self._write_synced(self.temp_path, new_raw)
+        self._checkpoint("new_staged")
+        self._write_journal(journal)
+        self._checkpoint("journal_prepared")
+
+        current_raw = self._read(self.path) if self._exists(self.path) else None
+        backup_raw = (
+            self._read(self.backup_path)
+            if self._exists(self.backup_path)
+            else None
+        )
+        if current_raw != current.raw or backup_raw != backup.raw:
+            self._clean_transaction_residue()
+            raise ConfigConflictError(
+                "configuration or rollback backup changed during transaction"
+            )
+
+        self._replace_synced(self.temp_path, self.path)
+        self._checkpoint("target_replaced")
+        self._write_journal(journal.with_phase("replaced"))
+        self._checkpoint("journal_replaced")
+        self._write_journal(journal.with_phase("committed"))
+        self._checkpoint("journal_committed")
+        self._clean_transaction_residue()
+        self._checkpoint("cleanup_complete")
+        return StoredConfig(
+            config=config,
+            generation=new_generation,
+            checksum=_sha256(canonical_config_bytes(config)),
+        )
+
     def save(
         self,
         config: Config,
         *,
         expected_generation: int | None = None,
+        transaction_id: str | None = None,
     ) -> StoredConfig:
         """Durably replace the configuration with optimistic conflict checking."""
 
@@ -573,6 +717,8 @@ class ConfigStore:
             or not 0 <= expected_generation <= _MAX_GENERATION
         ):
             raise ValueError("expected_generation is outside the supported range")
+        if transaction_id is not None and not _is_checksum(transaction_id):
+            raise ValueError("transaction_id must be a lowercase SHA-256")
 
         def operation() -> StoredConfig:
             self._recover()
@@ -582,55 +728,88 @@ class ConfigStore:
                 raise ConfigConflictError(
                     f"expected generation {expected_generation}, found {old_generation}"
                 )
-            if old_generation >= _MAX_GENERATION:
-                raise ConfigGenerationError("configuration generation is exhausted")
+            return self._commit_locked(config, old, transaction_id)
 
-            new_generation = old_generation + 1
-            new_raw = _record_bytes(config, new_generation)
-            new_checksum = _sha256(new_raw)
-            old_checksum = old.raw_checksum if old is not None else None
+        try:
+            self._fs.ensure_parent(self.path)
+        except OSError as exc:
+            raise _map_os_error(exc) from exc
+        return self._under_lock(operation)
 
-            if old is not None:
-                self._write_synced(self.backup_temp_path, old.raw)
-                self._replace_synced(self.backup_temp_path, self.backup_path)
-            elif self._exists(self.backup_path):
-                self._unlink(self.backup_path)
-                self._fs.fsync_directory(self.path.parent)
-            self._checkpoint("backup_durable")
+    def rollback_previous(
+        self,
+        *,
+        expected_current_generation: int,
+        expected_backup_generation: int,
+        expected_backup_checksum: str,
+        expected_current_transaction_id: str | None = None,
+    ) -> StoredConfig:
+        """Restore the authenticated immediate backup as a new generation.
 
-            self._write_synced(self.temp_path, new_raw)
-            self._checkpoint("new_staged")
+        The caller must bind the request to both the current generation and a
+        previously observed backup receipt.  No path or raw record is accepted,
+        the rollback never moves the backup record directly into place, and the
+        recovery source is not overwritten before the restored current record
+        is durable.
+        """
 
-            journal = _Journal(
-                phase="prepared",
-                old_generation=old_generation,
-                old_record_checksum=old_checksum,
-                new_generation=new_generation,
-                new_record_checksum=new_checksum,
+        current_generation = self._expected_generation(
+            expected_current_generation,
+            label="expected_current_generation",
+        )
+        backup_generation = self._expected_generation(
+            expected_backup_generation,
+            label="expected_backup_generation",
+        )
+        if not _is_checksum(expected_backup_checksum):
+            raise ValueError("expected_backup_checksum must be a lowercase SHA-256")
+        if (
+            expected_current_transaction_id is not None
+            and not _is_checksum(expected_current_transaction_id)
+        ):
+            raise ValueError(
+                "expected_current_transaction_id must be a lowercase SHA-256"
             )
-            self._write_journal(journal)
-            self._checkpoint("journal_prepared")
 
-            # Detect writers that ignore the shared lock before the commit point.
-            current_raw = self._read(self.path) if self._exists(self.path) else None
-            if current_raw != (old.raw if old is not None else None):
-                self._clean_transaction_residue()
-                raise ConfigConflictError("configuration changed during transaction")
-
-            self._replace_synced(self.temp_path, self.path)
-            self._checkpoint("target_replaced")
-
-            self._write_journal(journal.with_phase("replaced"))
-            self._checkpoint("journal_replaced")
-            self._write_journal(journal.with_phase("committed"))
-            self._checkpoint("journal_committed")
-
-            self._clean_transaction_residue()
-            self._checkpoint("cleanup_complete")
-            return StoredConfig(
-                config=config,
-                generation=new_generation,
-                checksum=_sha256(canonical_config_bytes(config)),
+        def operation() -> StoredConfig:
+            self._recover()
+            current = self._read_record_if_present(
+                self.path,
+                source="configuration",
+            )
+            found_generation = (
+                current.stored.generation if current is not None else 0
+            )
+            if found_generation != current_generation:
+                raise ConfigConflictError(
+                    f"expected generation {current_generation}, "
+                    f"found {found_generation}"
+                )
+            if current.stored.transaction_id != expected_current_transaction_id:
+                raise ConfigConflictError(
+                    "configuration transaction does not match the expected receipt"
+                )
+            backup = self._read_record_if_present(
+                self.backup_path,
+                source="configuration backup",
+            )
+            if backup is None:
+                raise ConfigCorruptError("configuration backup does not exist")
+            if backup.stored.generation != current_generation - 1:
+                raise ConfigConflictError(
+                    "configuration backup is not the immediately previous generation"
+                )
+            if (
+                backup.stored.generation != backup_generation
+                or backup.stored.checksum != expected_backup_checksum
+            ):
+                raise ConfigConflictError(
+                    "configuration backup does not match the expected receipt"
+                )
+            return self._commit_rollback_locked(
+                backup.stored.config,
+                current,
+                backup,
             )
 
         try:
