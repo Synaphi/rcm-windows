@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ..core import RejectedError, UnavailableError, UnsupportedError
+from ..config.schema import Config
+from ..core import (
+    ActionResult,
+    ActionStatus,
+    Node,
+    NodeRole,
+    RejectedError,
+    UnavailableError,
+    UnsupportedError,
+)
 from ..desktop import DesktopHost, UiThreadGuard
 from ..local_admin import LocalAdminService
 from ..privilege import LOCAL_ADMIN_ELEVATION_ENABLED, PrivilegeStatus
@@ -73,6 +82,169 @@ class RdpCommandHandler:
             "rdp_opened",
             "Windows Remote Desktop was opened.",
         )
+
+
+class LocalRayCommandHandler:
+    """Compose Start and Stop only for the configured local Ray node."""
+
+    _KINDS = {CommandKind.START, CommandKind.STOP}
+
+    def __init__(
+        self,
+        config: Config,
+        adapter: object | None,
+        *,
+        fallback: CommandHandler,
+    ) -> None:
+        if not isinstance(config, Config) or not callable(fallback):
+            raise TypeError("local Ray handler dependencies are invalid")
+        if adapter is not None and any(
+            not callable(getattr(adapter, operation, None))
+            for operation in (
+                "preflight", "start_head", "join_worker", "verify", "stop"
+            )
+        ):
+            raise TypeError("local Ray adapter is invalid")
+        self._config = config
+        self._adapter = adapter
+        self._fallback = fallback
+        self._epoch = 0
+
+    @staticmethod
+    def _command_result(
+        command: UiCommand,
+        result: ActionResult,
+        *,
+        success_message: str,
+    ) -> CommandResult:
+        if result.status is ActionStatus.SUCCEEDED:
+            status = ResultStatus.SUCCEEDED
+            message = success_message
+        elif result.status is ActionStatus.CANCELLED:
+            status = ResultStatus.CANCELLED
+            message = "The local Ray operation was cancelled."
+        else:
+            status = ResultStatus.FAILED
+            message = "The local Ray operation failed safely."
+        return CommandResult(
+            command.command_id,
+            status,
+            result.code.replace(".", "_"),
+            message,
+        )
+
+    def _local_node(self) -> Node | None:
+        local_id = self._config.nodes.local_node_id.casefold()
+        configured = next(
+            (
+                item
+                for item in self._config.nodes.items
+                if local_id and item.node_id.casefold() == local_id
+            ),
+            None,
+        )
+        if configured is None:
+            return None
+        return Node(
+            configured.node_id,
+            configured.address,
+            NodeRole(configured.role),
+            configured.enabled,
+        )
+
+    def __call__(self, command: UiCommand) -> CommandResult | None:
+        if not isinstance(command, UiCommand):
+            raise TypeError("command must be a UiCommand")
+        if command.kind not in self._KINDS:
+            return self._fallback(command)
+        if not self._config.ray.enabled:
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                "ray_disabled",
+                "Local Ray commands are disabled in settings.",
+            )
+        node = self._local_node()
+        adapter = self._adapter
+        if node is None or adapter is None:
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                "ray_config_invalid",
+                "Local Ray settings are incomplete.",
+            )
+        if node.role is NodeRole.OBSERVER:
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                "ray_role_unsupported",
+                "Observer nodes cannot run local Ray commands.",
+            )
+        self._epoch += 1
+        epoch = self._epoch
+        try:
+            preflight = adapter.preflight(node, epoch=epoch)
+            if not preflight.ok:
+                return self._command_result(
+                    command,
+                    preflight,
+                    success_message="",
+                )
+            if command.kind is CommandKind.STOP:
+                stopped = adapter.stop(node, epoch=epoch)
+                return self._command_result(
+                    command,
+                    stopped,
+                    success_message="Local Ray was stopped on this PC.",
+                )
+            if node.role is NodeRole.WORKER:
+                head = Node(
+                    "configured-head",
+                    self._config.ray.head_address,
+                    NodeRole.HEAD,
+                )
+                started = adapter.join_worker(node, head, epoch=epoch)
+                return self._command_result(
+                    command,
+                    started,
+                    success_message="This PC joined the configured Ray head.",
+                )
+            started = adapter.start_head(node, epoch=epoch)
+            if not started.ok:
+                return self._command_result(
+                    command,
+                    started,
+                    success_message="",
+                )
+            verified = adapter.verify((node,), node, epoch=epoch)
+            if verified.ok:
+                return self._command_result(
+                    command,
+                    verified,
+                    success_message="Local Ray head started and was verified.",
+                )
+            rolled_back = adapter.stop(node, epoch=epoch)
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                (
+                    "ray_start_rolled_back"
+                    if rolled_back.ok
+                    else "ray_rollback_failed"
+                ),
+                (
+                    "Verification failed and local Ray was stopped."
+                    if rolled_back.ok
+                    else "Verification and local Ray rollback both failed."
+                ),
+            )
+        except Exception:
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                "ray_operation_failed",
+                "The local Ray operation failed safely.",
+            )
 
 
 class LocalAdminCommandHandler:

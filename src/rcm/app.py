@@ -243,7 +243,7 @@ def main(
 
     from .adapters.windows_desktop import (
         ExactOwnedFallback, TkDesktopHost, WindowsAutostart, WindowsSingleton)
-    from .adapters.windows import compose_native_rdp
+    from .adapters.windows import compose_local_ray, compose_native_rdp
     from .adapters.windows_admin import WindowsAdminObserver
     from .adapters.windows_broker import WindowsOneShotBroker
     from .bootstrap import Environment, select_deployment
@@ -278,10 +278,11 @@ def main(
             raise RuntimeError("runtime bootstrap plan is unavailable")
         rdp_handler, runtime = compose_native_rdp(
             str(bootstrap_plan.paths.rdp_directory), unavailable_command_handler)
+        ray_handler = compose_local_ray(config, rdp_handler)
         local_admin = LocalAdminService(
             observer=WindowsAdminObserver(), broker=WindowsOneShotBroker())
         command_handler = LocalAdminCommandHandler(
-            local_admin, fallback=rdp_handler)
+            local_admin, fallback=ray_handler)
     ports = ApplicationPorts(
         identity=identity,
         host=TkDesktopHost(),

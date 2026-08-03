@@ -8,10 +8,11 @@ configuration boundary.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import ipaddress
 import json
+from pathlib import PureWindowsPath
 import re
 from typing import Any, Mapping, NoReturn
 from urllib.parse import urlsplit
@@ -122,6 +123,7 @@ class CleanupSection:
 @dataclass(frozen=True, slots=True)
 class RaySection:
     enabled: bool = False
+    executable_path: str = field(default="", repr=False)
     head_address: str = ""
     client_port: int = 6_379
     dashboard_port: int = 8_265
@@ -242,6 +244,25 @@ def _address(value: object, path: str, *, allow_empty: bool = False) -> str:
     if not labels or any(not _HOST_LABEL.fullmatch(label) for label in labels):
         _fail(path, "must be an IP address or DNS host name")
     return result
+
+
+def _ray_executable_path(value: object, path: str) -> str:
+    result = _string(value, path, maximum=32_767)
+    if not result:
+        return ""
+    candidate = PureWindowsPath(result)
+    folded = result.replace("/", "\\").casefold()
+    if (
+        not candidate.is_absolute()
+        or candidate.anchor.startswith("\\\\")
+        or folded.startswith(("\\\\?\\", "\\\\.\\", "\\??\\", "\\device\\"))
+        or any(part == ".." for part in candidate.parts)
+        or any(":" in part for part in candidate.parts[1:])
+        or any(part.endswith((" ", ".")) for part in candidate.parts[1:])
+        or candidate.name.casefold() != "ray.exe"
+    ):
+        _fail(path, "must be one absolute local ray.exe path")
+    return str(candidate)
 
 
 def _section(
@@ -441,6 +462,7 @@ def _parse_ray(root: Mapping[str, object]) -> RaySection:
         data,
         {
             "enabled",
+            "executable_path",
             "head_address",
             "client_port",
             "dashboard_port",
@@ -452,6 +474,10 @@ def _parse_ray(root: Mapping[str, object]) -> RaySection:
     defaults = RaySection()
     result = RaySection(
         enabled=_boolean(data.get("enabled", defaults.enabled), "ray.enabled"),
+        executable_path=_ray_executable_path(
+            data.get("executable_path", defaults.executable_path),
+            "ray.executable_path",
+        ),
         head_address=_address(
             data.get("head_address", defaults.head_address),
             "ray.head_address",
@@ -477,8 +503,9 @@ def _parse_ray(root: Mapping[str, object]) -> RaySection:
             3_600,
         ),
     )
-    if result.enabled and not result.head_address:
-        _fail("ray.head_address", "is required when ray.enabled is true")
+    if result.enabled:
+        if not result.head_address:
+            _fail("ray.head_address", "is required when ray.enabled is true")
     if result.client_port == result.dashboard_port:
         _fail("ray.dashboard_port", "must differ from client_port")
     return result
@@ -665,6 +692,10 @@ def config_to_dict(config: Config) -> dict[str, object]:
         },
         "ray": {
             "enabled": config.ray.enabled,
+            "executable_path": _ray_executable_path(
+                config.ray.executable_path,
+                "ray.executable_path",
+            ),
             "head_address": config.ray.head_address,
             "client_port": config.ray.client_port,
             "dashboard_port": config.ray.dashboard_port,

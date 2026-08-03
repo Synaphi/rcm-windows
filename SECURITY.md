@@ -35,6 +35,12 @@ The intended boundary is local-first:
   files have unpredictable application-owned names, sensitive device
   redirection is off by default, and owned files are cleaned at shutdown and
   the next startup;
+- Ray is inert unless the user explicitly enables it and selects one absolute
+  local `ray.exe`; the desktop accepts exactly Ray 2.55.1, executes only typed
+  local start/stop/status/version argv without a shell, bounds time and output,
+  strips inherited Ray/Python/pip injection variables, gives each node a full
+  local per-user Ray temp path, keeps the dashboard on loopback, and exposes no
+  remote RCM cluster command;
 - the desktop application normally runs without elevation;
 - privileged local changes are disabled in the unsigned one-file preview;
 - configuration and logs remain in local application data, and configuration
@@ -50,6 +56,12 @@ The intended boundary is local-first:
 Any report showing a listener reachable beyond loopback, unbounded or persistent
 elevation, unsafe path handling, secret persistence, remote command execution,
 dependency-integrity bypass, or unintended data disclosure is security relevant.
+For the local Ray composition, a report is also relevant if disabled settings
+cause path or process probing, an unconfigured or non-local executable runs,
+an unsupported Ray version proceeds, command output or the configured path is
+disclosed, an inherited environment can redirect the Ray address or temp path,
+a worker reuses another account's temp path, or failed local-head verification
+does not attempt local rollback.
 
 The persisted import receipt, logs, and provenance must not serialize the
 migration planner's private overlay, source contents, node values, user names,

@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ipaddress
 import math
+import ntpath
+from pathlib import PureWindowsPath
 import re
-from threading import RLock
+from threading import Lock, RLock, Thread
+import time
 from typing import Protocol
 
 from ..core import (
@@ -28,6 +31,29 @@ _START_OPTION_FIELDS = (
     "min_worker_port",
     "max_worker_port",
 )
+SUPPORTED_RAY_VERSION = "2.55.1"
+_RAY_VERSION = re.compile(
+    r"(?:^|\s)ray,\s+version\s+(\d+\.\d+\.\d+)(?:\s|$)",
+    re.I,
+)
+_START_VALUE_OPTIONS = frozenset({
+    "--address",
+    "--node-ip-address",
+    "--port",
+    "--dashboard-host",
+    "--dashboard-port",
+    "--num-cpus",
+    "--temp-dir",
+    "--node-manager-port",
+    "--object-manager-port",
+    "--runtime-env-agent-port",
+    "--dashboard-agent-grpc-port",
+    "--dashboard-agent-listen-port",
+    "--metrics-export-port",
+    "--min-worker-port",
+    "--max-worker-port",
+    "--node-name",
+})
 
 
 class ManifestSink(Protocol):
@@ -130,6 +156,218 @@ class RayCliSettings:
             )
 
 
+def _local_ray_path(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("Ray executable must be one safe absolute local path")
+    path = PureWindowsPath(value)
+    folded = value.replace("/", "\\").casefold()
+    if (
+        not path.is_absolute()
+        or path.anchor.startswith("\\\\")
+        or folded.startswith(("\\\\?\\", "\\\\.\\", "\\??\\", "\\device\\"))
+        or any(part == ".." for part in path.parts)
+        or any(":" in part for part in path.parts[1:])
+        or any(part.endswith((" ", ".")) for part in path.parts[1:])
+        or path.name.casefold() != "ray.exe"
+    ):
+        raise ValueError("Ray executable must be one absolute local ray.exe path")
+    return str(path)
+
+
+def _option_pairs(
+    arguments: tuple[str, ...],
+    *,
+    value_options: frozenset[str],
+    flag_options: frozenset[str] = frozenset(),
+) -> bool:
+    seen: set[str] = set()
+    index = 0
+    while index < len(arguments):
+        option = arguments[index]
+        if option in seen:
+            return False
+        seen.add(option)
+        if option in flag_options:
+            index += 1
+            continue
+        if option not in value_options or index + 1 >= len(arguments):
+            return False
+        value = arguments[index + 1]
+        if not value or value.startswith("--"):
+            return False
+        index += 2
+    return True
+
+
+class LocalRayProcessRunner:
+    """Run only the configured local Ray CLI with bounded argv and output."""
+
+    def __init__(self, executable: str) -> None:
+        self._executable = _local_ray_path(executable)
+
+    def _validate_request(self, request: ProcessRequest) -> None:
+        if not isinstance(request, ProcessRequest):
+            raise TypeError("request must be a ProcessRequest")
+        if request.cwd is not None:
+            raise ValueError("Ray commands do not accept a working directory")
+        argv = request.argv
+        if ntpath.normcase(str(PureWindowsPath(argv[0]))) != ntpath.normcase(
+            self._executable
+        ):
+            raise ValueError("Ray command executable does not match configuration")
+        if len(argv) == 2 and argv[1] == "--version":
+            return
+        if len(argv) < 2:
+            raise ValueError("Ray command is incomplete")
+        verb = argv[1]
+        tail = argv[2:]
+        if verb == "start" and _option_pairs(
+            tail,
+            value_options=_START_VALUE_OPTIONS,
+            flag_options=frozenset({"--head"}),
+        ):
+            return
+        if verb == "stop" and _option_pairs(
+            tail,
+            value_options=frozenset({"--grace-period"}),
+            flag_options=frozenset({"--force"}),
+        ):
+            return
+        if verb == "status" and _option_pairs(
+            tail,
+            value_options=frozenset({"--address"}),
+        ):
+            return
+        raise ValueError("Ray command is outside the local CLI allowlist")
+
+    def _assert_executable(self) -> None:
+        import os
+        import stat
+
+        try:
+            details = os.stat(self._executable, follow_symlinks=False)
+        except OSError:
+            raise OSError("configured Ray executable is unavailable") from None
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or bool(getattr(details, "st_file_attributes", 0) & 0x400)
+        ):
+            raise OSError("configured Ray executable is not a regular local file")
+
+    @staticmethod
+    def _environment() -> dict[str, str]:
+        import os
+
+        blocked_prefixes = ("PIP_", "PYTHON", "RAY_")
+        result = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.upper().startswith(blocked_prefixes)
+        }
+        result["RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER"] = "1"
+        result["RAY_USAGE_STATS_ENABLED"] = "0"
+        result["RAY_USAGE_STATS_PROMPT_ENABLED"] = "0"
+        return result
+
+    def run(
+        self,
+        request: ProcessRequest,
+        *,
+        cancellation: CancellationToken | None = None,
+    ) -> ProcessResult:
+        import subprocess
+
+        self._validate_request(request)
+        self._assert_executable()
+        if cancellation is not None and cancellation.cancelled:
+            return ProcessResult(None, cancelled=True)
+        started = time.monotonic()
+        process = subprocess.Popen(
+            request.argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            cwd=None,
+            env=self._environment(),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = {"stdout": bytearray(), "stderr": bytearray()}
+        output_lock = Lock()
+        remaining = [request.max_output_bytes]
+
+        def drain(name: str, stream: object) -> None:
+            try:
+                while True:
+                    try:
+                        chunk = stream.read(4_096)  # type: ignore[attr-defined]
+                    except (OSError, ValueError):
+                        break
+                    if not chunk:
+                        break
+                    with output_lock:
+                        keep = min(len(chunk), remaining[0])
+                        if keep:
+                            output[name].extend(chunk[:keep])
+                            remaining[0] -= keep
+            finally:
+                try:
+                    stream.close()  # type: ignore[attr-defined]
+                except (OSError, ValueError):
+                    pass
+
+        readers = (
+            Thread(target=drain, args=("stdout", process.stdout), daemon=True),
+            Thread(target=drain, args=("stderr", process.stderr), daemon=True),
+        )
+        for reader in readers:
+            reader.start()
+        timed_out = False
+        cancelled = False
+        deadline = started + request.timeout_seconds
+        while process.poll() is None:
+            if cancellation is not None and cancellation.cancelled:
+                cancelled = True
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                break
+            time.sleep(0.01)
+        process.wait()
+        for reader in readers:
+            reader.join(0.5)
+        for stream, reader in zip(
+            (process.stdout, process.stderr), readers, strict=True
+        ):
+            if reader.is_alive():
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+                reader.join(0.5)
+        duration = max(0.0, time.monotonic() - started)
+        return ProcessResult(
+            None if timed_out or cancelled else process.returncode,
+            stdout=bytes(output["stdout"]).decode("utf-8", errors="replace"),
+            stderr=bytes(output["stderr"]).decode("utf-8", errors="replace"),
+            duration_seconds=duration,
+            timed_out=timed_out,
+            cancelled=cancelled,
+        )
+
+
 class RayCliAdapter:
     """Local Ray CLI adapter; remote dispatch is deliberately unsupported."""
 
@@ -206,8 +444,36 @@ class RayCliAdapter:
             return failure
         if failure := self._epoch_failure(epoch):
             return failure
-        if cancellation is not None:
-            cancellation.raise_if_cancelled()
+        request = ProcessRequest(
+            (self._settings.executable, "--version"),
+            timeout_seconds=self._settings.status_timeout_seconds,
+            max_output_bytes=self._settings.max_output_bytes,
+        )
+        try:
+            result = self._process_runner.run(
+                request,
+                cancellation=cancellation,
+            )
+        except Exception:
+            if cancellation is not None and cancellation.cancelled:
+                return ActionResult(
+                    ActionStatus.CANCELLED, "ray.cancelled", retryable=True)
+            return ActionResult(
+                ActionStatus.FAILED, "ray.runner_error", retryable=True)
+        if not isinstance(result, ProcessResult):
+            return ActionResult(ActionStatus.FAILED, "ray.invalid_result")
+        if result.cancelled:
+            return ActionResult(
+                ActionStatus.CANCELLED, "ray.cancelled", retryable=True)
+        if result.timed_out:
+            return ActionResult(
+                ActionStatus.FAILED, "ray.timeout", retryable=True)
+        if result.exit_code != 0:
+            return ActionResult(
+                ActionStatus.FAILED, "ray.exit_nonzero", retryable=True)
+        version = _RAY_VERSION.search(f"{result.stdout}\n{result.stderr}")
+        if version is None or version.group(1) != SUPPORTED_RAY_VERSION:
+            return ActionResult(ActionStatus.FAILED, "ray.version_unsupported")
         return ActionResult.success("ray.preflight_ready")
 
     def stop(
@@ -386,7 +652,9 @@ class RayCliAdapter:
 
 
 __all__ = [
+    "LocalRayProcessRunner",
     "ManifestSink",
     "RayCliAdapter",
     "RayCliSettings",
+    "SUPPORTED_RAY_VERSION",
 ]

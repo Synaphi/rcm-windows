@@ -36,12 +36,12 @@ The executable currently provides:
 - an isolated, non-elevated preview identity.
 
 The monitoring, cleanup, Ray, and loopback HTTP implementations are present and
-tested as service modules, but their operational desktop commands are not yet
-composed into the published `v2.08.03b` preview. A button that reports
-`This operation is not configured` did not perform the requested operation.
-The Settings surface is read-only; use the setup wizard for the supported local
-fields. These limitations make this a developer preview, not a stable 1.x
-replacement.
+tested as service modules, but their operational desktop commands are not
+composed into the published `v2.08.03b` preview. The current source now composes
+the two explicit local Ray commands documented below; that change must not be
+attributed to `v2.08.03b` or any existing asset. The Settings surface is
+read-only; use the setup wizard for supported local fields. These limitations
+make this a developer preview, not a stable 1.x replacement.
 
 RCM is not a managed-node agent or remote control plane. It does not provide
 remote RCM metrics or commands, fleet orchestration, password distribution,
@@ -84,6 +84,40 @@ Addresses already present in the integrity-wrapped node configuration are
 available as RDP defaults. An address or user name typed only in the RDP window
 is session-only and is not added to `config.json`.
 
+## Local Ray composition in current source
+
+The current source, unlike the published `v2.08.03b` executable, can perform
+two user-initiated operations: **Start local Ray** and **Stop local Ray**. Setup
+must first explicitly enable Ray, select one absolute local `ray.exe`, and set
+the head address. RCM does not scan the user profile, trust `PATH`, import the
+1.x Ray executable path, download Ray, or invoke another machine.
+
+The compatibility pin is Ray `2.55.1` under CPython 3.12 x64. Each operation
+runs `ray.exe --version` first and fails closed on any other result. A local
+head role starts a head with its configured address, loopback-only dashboard,
+ports, and CPU count, then performs a bounded status verification; failed
+verification triggers a local `ray stop` rollback. A local worker role joins
+only the configured head and supplies a full per-user local Ray temp path so a
+head running under a different Windows account cannot redirect it into that
+account's profile. An observer role is refused. Commands use separate argv
+tokens, no shell, a sanitized environment that replaces inherited `RAY_*` and
+Python/pip controls, bounded time and output, and the same configured local
+executable for stop. Command output and the local path are not shown in UI
+results.
+
+The selected Ray installation must already work locally. For the dashboard
+used by the compatibility lab, install the pinned `ray[default]` extra and the
+Microsoft Visual C++ runtime required by Ray's signed Windows child
+executables. RCM neither downloads nor repairs these prerequisites; a missing
+prerequisite fails the bounded local start.
+
+Ray documents Windows support as beta and Windows multi-node clustering as
+experimental. Use this composition only on disposable, route-isolated,
+non-production Windows machines. RCM adds no remote RCM command, update,
+password, repair, listener, or cluster API. Stop Ray explicitly on every lab
+node and verify that Ray processes, temporary lab state, VM checkpoints, and
+test-only networking are removed before declaring a test complete.
+
 ## Fast setup on another Windows PC
 
 1. Download `RCM-2.08.03b-windows-x64.exe` from the matching `v2.08.03b`
@@ -107,9 +141,11 @@ Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe -ArgumentList '--configur
 ```
 
 4. Enter only this PC's node ID, address or host name, role, optional CPU count,
-   future monitoring preference, and minimized-start preference. The monitoring
-   preference is stored but its service is not composed in this preview. Select
-   **Save**, then start the executable normally.
+   future monitoring preference, and minimized-start preference. Current source
+   also exposes explicit local Ray enablement, local `ray.exe`, and head-address
+   fields; the published `v2.08.03b` executable does not. The monitoring
+   preference is stored but its service is not composed. Select **Save**, then
+   start the executable normally.
 
 The default packaged layout stores state under
 `%LOCALAPPDATA%\RayClusterManager`. To keep state beside the executable instead,
@@ -132,8 +168,8 @@ Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe
 ```
 
 The wizard never accepts a password, token, credential, firewall change, remote
-command, or update URL. It does not enable Windows RDP, alter Ray, open a port,
-or contact another PC.
+command, or update URL. Saving settings does not start or stop Ray, enable
+Windows RDP, open a listener, or contact another PC.
 
 ## Requirements
 
@@ -141,6 +177,8 @@ or contact another PC.
 - Windows 11 x64 as the primary development target
 - Windows 10 x64 on a best-effort basis
 - PowerShell for the documented setup commands
+- optional user-supplied Ray 2.55.1 for current-source local Ray commands;
+  Windows multi-node operation remains experimental
 
 The source tree does not bundle dependency wheels or the optional
 LibreHardwareMonitor payload. Their approved identities are recorded in the

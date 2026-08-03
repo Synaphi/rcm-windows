@@ -28,8 +28,8 @@ class MainWindowModel:
 
 class MainWindowView:
     _ACTIONS = (
-        MainAction("Start", CommandKind.START),
-        MainAction("Stop", CommandKind.STOP),
+        MainAction("Start local Ray", CommandKind.START),
+        MainAction("Stop local Ray", CommandKind.STOP),
         MainAction("Restart", CommandKind.RESTART),
         MainAction("Status", CommandKind.OPEN_SURFACE, Surface.STATUS),
         MainAction("Settings", CommandKind.OPEN_SURFACE, Surface.SETTINGS),

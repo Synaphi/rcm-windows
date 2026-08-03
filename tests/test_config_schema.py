@@ -45,7 +45,9 @@ class ConfigSchemaTests(unittest.TestCase):
             set(config_to_dict(config)),
         )
         self.assertEqual((), config.nodes.items)
+        self.assertEqual("", config.ray.executable_path)
         self.assertEqual("", config.ray.head_address)
+        self.assertNotIn("executable_path", repr(config.ray))
         self.assertEqual("", config.rdp.credential_reference)
         self.assertEqual("", config.update.manifest_url)
         self.assertFalse(config.remote.enabled)
@@ -148,7 +150,13 @@ class ConfigSchemaTests(unittest.TestCase):
                 }
             },
             {"ray": {"client_port": 8_265, "dashboard_port": 8_265}},
-            {"ray": {"enabled": True, "head_address": ""}},
+            {
+                "ray": {
+                    "enabled": True,
+                    "executable_path": r"C:\Synthetic\ray.exe",
+                    "head_address": "",
+                }
+            },
             {"remote": {"enabled": True, "bind_host": "0.0.0.0"}},
             {"update": {"enabled": True, "manifest_url": "http://192.0.2.1/a"}},
             {
@@ -185,7 +193,13 @@ class ConfigSchemaTests(unittest.TestCase):
                     ],
                     "local_node_id": "EXAMPLE-HEAD",
                 },
-                "ray": {"enabled": True, "head_address": "192.0.2.10"},
+                "ray": {
+                    "enabled": True,
+                    "executable_path": (
+                        r"C:\Synthetic\Python312\Scripts\ray.exe"
+                    ),
+                    "head_address": "192.0.2.10",
+                },
                 "remote": {"enabled": True, "bind_host": "::1"},
                 "update": {
                     "enabled": True,
@@ -196,8 +210,43 @@ class ConfigSchemaTests(unittest.TestCase):
 
         self.assertEqual("example-head", config.nodes.items[0].node_id)
         self.assertTrue(config.ray.enabled)
+        self.assertEqual(
+            r"C:\Synthetic\Python312\Scripts\ray.exe",
+            config.ray.executable_path,
+        )
+        self.assertEqual(config, config_from_dict(config_to_dict(config)))
         self.assertTrue(config.remote.enabled)
         self.assertTrue(config.update.enabled)
+
+    def test_ray_executable_path_is_absolute_local_and_exact(self) -> None:
+        rejected = (
+            "ray.exe",
+            r".\ray.exe",
+            r"C:\Synthetic\..\ray.exe",
+            "\\" * 2 + r"synthetic\share\ray.exe",
+            "\\" * 2 + r"?\C:\Synthetic\ray.exe",
+            "\\" * 2 + r".\C:\Synthetic\ray.exe",
+            r"\??\C:\Synthetic\ray.exe",
+            r"\Device\HarddiskVolume1\ray.exe",
+            r"C:\Synthetic\ray.exe:alternate",
+            r"C:\Synthetic\python.exe",
+            "C:\\Synthetic\\ray.exe\n",
+        )
+        for executable_path in rejected:
+            with (
+                self.subTest(executable_path=executable_path),
+                self.assertRaises(ConfigValidationError),
+            ):
+                config_from_dict({"ray": {"executable_path": executable_path}})
+
+        legacy_2x = config_from_dict({
+            "ray": {
+                "enabled": True,
+                "head_address": "192.0.2.10",
+            }
+        })
+        self.assertTrue(legacy_2x.ray.enabled)
+        self.assertEqual("", legacy_2x.ray.executable_path)
 
     def test_direct_dataclass_construction_is_revalidated_before_encoding(self) -> None:
         invalid = Config(

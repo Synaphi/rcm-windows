@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from io import BytesIO
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
+from unittest import mock
 from threading import Barrier, Thread
 
-from rcm.adapters.ray_cli import RayCliAdapter, RayCliSettings
+from rcm.adapters.ray_cli import (
+    LocalRayProcessRunner,
+    RayCliAdapter,
+    RayCliSettings,
+    SUPPORTED_RAY_VERSION,
+)
 from rcm.cluster import (
     BusyAssessment,
     ClusterBusyPolicy,
@@ -32,7 +42,9 @@ from rcm.runtime import CancellationToken
 
 class FakeProcessRunner:
     def __init__(self, result: ProcessResult | None = None) -> None:
-        self.result = result or ProcessResult(0)
+        self.result = result or ProcessResult(
+            0, stdout=f"ray, version {SUPPORTED_RAY_VERSION}\n"
+        )
         self.requests: list[ProcessRequest] = []
         self.cancellations: list[object | None] = []
 
@@ -375,7 +387,39 @@ class RayCliAdapterTests(unittest.TestCase):
         worker = Node("worker", "192.0.2.20", NodeRole.WORKER)
         self.assertTrue(adapter.preflight(worker, epoch=3).ok)
         self.assertEqual("stale", adapter.stop(worker, epoch=2).code)
-        self.assertEqual([], runner.requests)
+        self.assertEqual(1, len(runner.requests))
+        self.assertEqual("--version", runner.requests[0].argv[1])
+
+    def test_preflight_requires_exact_supported_version_without_disclosure(
+        self,
+    ) -> None:
+        worker = Node("worker", "192.0.2.20", NodeRole.WORKER)
+        supported = FakeProcessRunner(ProcessResult(
+            0,
+            stdout=(
+                f"ray, version {SUPPORTED_RAY_VERSION}\n"
+                "synthetic private-looking output"
+            ),
+        ))
+        result = RayCliAdapter(self._settings(), supported).preflight(
+            worker, epoch=1
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual("", result.message)
+        self.assertEqual(
+            ("C:/synthetic path/ray.exe", "--version"),
+            supported.requests[0].argv,
+        )
+
+        unsupported = FakeProcessRunner(ProcessResult(
+            0, stderr="ray, version 2.54.0\nsynthetic private output"
+        ))
+        result = RayCliAdapter(self._settings(), unsupported).preflight(
+            worker, epoch=1
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual("ray.version_unsupported", result.code)
+        self.assertEqual("", result.message)
 
     def test_ipv6_head_endpoint_is_bracketed_for_join_and_status(self) -> None:
         worker_runner = FakeProcessRunner()
@@ -391,6 +435,110 @@ class RayCliAdapterTests(unittest.TestCase):
         )
         self.assertTrue(head_adapter.verify((head,), head, epoch=8).ok)
         self.assertIn("[2001:db8::10]:6379", head_runner.requests[0].argv)
+
+
+class LocalRayProcessRunnerTests(unittest.TestCase):
+    class _Process:
+        def __init__(self, stdout: bytes, stderr: bytes) -> None:
+            self.stdout = BytesIO(stdout)
+            self.stderr = BytesIO(stderr)
+            self.returncode = 0
+            self.killed = False
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self) -> int:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+    def test_runner_is_exact_local_no_shell_sanitized_and_output_bounded(
+        self,
+    ) -> None:
+        executable = r"C:\Synthetic\Ray\ray.exe"
+        runner = LocalRayProcessRunner(executable)
+        process = self._Process(b"0123456789", b"abcdefghij")
+        hostile = {
+            "PIP_INDEX_URL": "synthetic.invalid/index",
+            "PYTHONPATH": r"C:\Synthetic\Untrusted",
+            "RAY_ADDRESS": "synthetic.invalid:10001",
+            "Ray_TmpDir": r"C:\Synthetic\Untrusted\ray",
+        }
+        with mock.patch.dict("os.environ", hostile, clear=False):
+            with mock.patch.object(runner, "_assert_executable"), mock.patch(
+                "subprocess.Popen", return_value=process
+            ) as popen:
+                result = runner.run(
+                        ProcessRequest(
+                            (executable, "--version"),
+                            max_output_bytes=7,
+                        )
+                    )
+            self.assertTrue(result.ok)
+            self.assertLessEqual(
+                len(result.stdout.encode()) + len(result.stderr.encode()), 7
+            )
+            arguments, options = popen.call_args
+            self.assertEqual((executable, "--version"), arguments[0])
+            self.assertFalse(options["shell"])
+            self.assertIs(subprocess.DEVNULL, options["stdin"])
+            self.assertEqual(
+                "1", options["env"]["RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER"]
+            )
+            self.assertEqual("0", options["env"]["RAY_USAGE_STATS_ENABLED"])
+            self.assertNotIn("PYTHONPATH", options["env"])
+            self.assertNotIn("PIP_INDEX_URL", options["env"])
+            self.assertNotIn("RAY_ADDRESS", options["env"])
+            self.assertNotIn("Ray_TmpDir", options["env"])
+
+    def test_runner_rejects_other_executables_verbs_and_working_directories(
+        self,
+    ) -> None:
+        executable = r"C:\Synthetic\Ray\ray.exe"
+        runner = LocalRayProcessRunner(executable)
+        requests = (
+            ProcessRequest((r"C:\Synthetic\Ray\other.exe", "--version")),
+            ProcessRequest((executable, "exec", "cmd.exe")),
+            ProcessRequest((executable, "start", "--unknown", "value")),
+            ProcessRequest(
+                (executable, "--version"), cwd=r"C:\Synthetic\Working"
+            ),
+        )
+        for request in requests:
+            with self.subTest(argv=request.argv), self.assertRaises(ValueError):
+                runner.run(request)
+
+        for rejected in (
+            "ray.exe",
+            "\\" * 2 + r"server\share\ray.exe",
+            r"C:\Synthetic\python.exe",
+        ):
+            with self.subTest(rejected=rejected), self.assertRaises(ValueError):
+                LocalRayProcessRunner(rejected)
+
+    def test_runner_timeout_kills_the_local_cli(self) -> None:
+        class HangingProcess(self._Process):
+            def poll(self) -> int | None:
+                return self.returncode if self.killed else None
+
+        executable = r"C:\Synthetic\Ray\ray.exe"
+        runner = LocalRayProcessRunner(executable)
+        process = HangingProcess(b"", b"")
+        with mock.patch.object(runner, "_assert_executable"), mock.patch(
+            "subprocess.Popen", return_value=process
+        ):
+            result = runner.run(
+                    ProcessRequest(
+                        (executable, "--version"),
+                        timeout_seconds=0.02,
+                    )
+                )
+        self.assertTrue(result.timed_out)
+        self.assertTrue(process.killed)
+        self.assertIsNone(result.exit_code)
 
 
 class ClusterPolicyTests(unittest.TestCase):

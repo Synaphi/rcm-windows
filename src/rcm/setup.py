@@ -20,6 +20,7 @@ from .config.schema import (
     Config,
     ConfigValidationError,
     NodesSection,
+    RaySection,
     canonical_config_bytes,
     canonical_json_bytes,
     config_to_dict,
@@ -877,6 +878,9 @@ def configure_local_node(
     cpu_count: int,
     monitoring_enabled: bool,
     start_minimized: bool,
+    ray_enabled: bool | None = None,
+    ray_executable_path: str | None = None,
+    ray_head_address: str | None = None,
 ) -> Config:
     """Apply the secret-free setup-wizard fields to a typed configuration."""
 
@@ -886,6 +890,14 @@ def configure_local_node(
         raise TypeError("config must be a Config")
     if type(monitoring_enabled) is not bool or type(start_minimized) is not bool:
         raise TypeError("setup flags must be bool values")
+    if ray_enabled is not None and type(ray_enabled) is not bool:
+        raise TypeError("Ray enablement must be a bool value")
+    if ray_executable_path is not None and not isinstance(
+        ray_executable_path, str
+    ):
+        raise TypeError("Ray executable path must be text")
+    if ray_head_address is not None and not isinstance(ray_head_address, str):
+        raise TypeError("Ray head address must be text")
     node = NodeDraft(
         node_id=node_id,
         address=address,
@@ -904,11 +916,38 @@ def configure_local_node(
             items.append(existing)
     if not replaced_local:
         items.append(node)
+    ray = config.ray
+    if ray_enabled is not None:
+        ray = RaySection(
+            enabled=ray_enabled,
+            executable_path=(
+                ray.executable_path
+                if ray_executable_path is None
+                else ray_executable_path.strip()
+            ),
+            head_address=(
+                ray.head_address
+                if ray_head_address is None
+                else ray_head_address.strip()
+            ),
+            client_port=ray.client_port,
+            dashboard_port=ray.dashboard_port,
+            cpu_count=ray.cpu_count,
+            startup_timeout_seconds=ray.startup_timeout_seconds,
+        )
+        if ray.enabled and node.role == "observer":
+            raise ValueError("an observer cannot enable local Ray commands")
+        if ray.enabled and not ray.executable_path:
+            raise ConfigValidationError(
+                "ray.executable_path",
+                "is required when Ray is enabled in local setup",
+            )
     updated = replace(
         config,
         app=replace(config.app, start_minimized=start_minimized),
         monitoring=replace(config.monitoring, enabled=monitoring_enabled),
         nodes=NodesSection(tuple(items), node.node_id),
+        ray=ray,
     )
     config_to_dict(updated)
     return updated
@@ -923,6 +962,9 @@ def _configuration_form_result(
     cpu_count: str,
     monitoring_enabled: bool,
     start_minimized: bool,
+    ray_enabled: bool | None = None,
+    ray_executable_path: str | None = None,
+    ray_head_address: str | None = None,
 ) -> tuple[Config | None, str]:
     """Return a validated form result or one safe user-facing error."""
 
@@ -935,6 +977,9 @@ def _configuration_form_result(
             cpu_count=int(cpu_count, 10),
             monitoring_enabled=monitoring_enabled,
             start_minimized=start_minimized,
+            ray_enabled=ray_enabled,
+            ray_executable_path=ray_executable_path,
+            ray_head_address=ray_head_address,
         )
     except (ConfigValidationError, TypeError, ValueError) as exc:
         return None, str(exc)
@@ -976,6 +1021,9 @@ def _configuration_dialog(config: Config) -> _ConfigurationChoice | None:
     cpu_count = tk.StringVar(value=str(current.cpu_count if current else 0))
     monitoring = tk.BooleanVar(value=config.monitoring.enabled)
     minimized = tk.BooleanVar(value=config.app.start_minimized)
+    ray_enabled = tk.BooleanVar(value=config.ray.enabled)
+    ray_executable = tk.StringVar(value=config.ray.executable_path)
+    ray_head = tk.StringVar(value=config.ray.head_address)
     rows = (
         ("Local node ID", node_id),
         ("Address or host name", address),
@@ -1000,17 +1048,58 @@ def _configuration_dialog(config: Config) -> _ConfigurationChoice | None:
     )
     tk.Checkbutton(
         frame,
+        text="Enable local Ray 2.55.1 commands (experimental on Windows)",
+        variable=ray_enabled,
+    ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 2))
+    tk.Label(frame, text="Local ray.exe").grid(
+        row=6, column=0, sticky="w", padx=(0, 10), pady=3
+    )
+    ray_path_frame = tk.Frame(frame)
+    ray_path_frame.grid(row=6, column=1, sticky="ew", pady=3)
+    tk.Entry(ray_path_frame, textvariable=ray_executable, width=27).pack(
+        side="left", fill="x", expand=True
+    )
+
+    def choose_ray_executable() -> None:
+        from tkinter import filedialog
+
+        options: dict[str, object] = {
+            "title": "Select the local Ray 2.55.1 ray.exe",
+            "filetypes": (("Ray CLI", "ray.exe"), ("Executable", "*.exe")),
+        }
+        current_path = ray_executable.get().strip()
+        if current_path:
+            options["initialdir"] = str(Path(current_path).parent)
+            options["initialfile"] = Path(current_path).name
+        selected = filedialog.askopenfilename(parent=root, **options)
+        if selected:
+            ray_executable.set(selected)
+
+    tk.Button(
+        ray_path_frame,
+        text="Browse...",
+        width=9,
+        command=choose_ray_executable,
+    ).pack(side="left", padx=(6, 0))
+    tk.Label(frame, text="Ray head address").grid(
+        row=7, column=0, sticky="w", padx=(0, 10), pady=3
+    )
+    tk.Entry(frame, textvariable=ray_head, width=34).grid(
+        row=7, column=1, sticky="ew", pady=3
+    )
+    tk.Checkbutton(
+        frame,
         text="Enable monitoring when the service is available",
         variable=monitoring,
-    ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 2))
+    ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 2))
     tk.Checkbutton(
         frame, text="Start minimized", variable=minimized
-    ).grid(row=6, column=0, columnspan=2, sticky="w", pady=2)
+    ).grid(row=9, column=0, columnspan=2, sticky="w", pady=2)
     status = tk.StringVar(value="")
     tk.Label(
         frame, textvariable=status, fg="#800000", justify="left",
         wraplength=460,
-    ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
     result: list[_ConfigurationChoice] = []
 
     def save() -> None:
@@ -1022,6 +1111,9 @@ def _configuration_dialog(config: Config) -> _ConfigurationChoice | None:
             cpu_count=cpu_count.get(),
             monitoring_enabled=monitoring.get(),
             start_minimized=minimized.get(),
+            ray_enabled=ray_enabled.get(),
+            ray_executable_path=ray_executable.get(),
+            ray_head_address=ray_head.get(),
         )
         if updated is None:
             status.set(error)
@@ -1055,7 +1147,7 @@ def _configuration_dialog(config: Config) -> _ConfigurationChoice | None:
         root.destroy()
 
     buttons = tk.Frame(frame)
-    buttons.grid(row=8, column=0, columnspan=2, sticky="e", pady=(12, 0))
+    buttons.grid(row=11, column=0, columnspan=2, sticky="e", pady=(12, 0))
     tk.Button(
         buttons,
         text="Import RCM 1.x...",
