@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
 import ipaddress
 import re
-from typing import Protocol
+import secrets
+from typing import Callable, Protocol
 
 from .core import Capability, RejectedError, UnavailableError
 from .ports import CredentialReference, CredentialStore
@@ -29,13 +29,14 @@ def _address(value: str) -> tuple[str, bool]:
     try:
         parsed = ipaddress.ip_address(value)
     except ValueError:
-        labels = value.split(".")
+        candidate = value[:-1] if value.endswith(".") else value
+        labels = candidate.split(".")
         if (
             any(not label or _HOST_LABEL.fullmatch(label) is None for label in labels)
-            or len(value) > 253
+            or not candidate
         ):
             raise ValueError("RDP address is invalid") from None
-        return value.casefold(), False
+        return candidate.casefold(), False
     return parsed.compressed, parsed.version == 6
 
 
@@ -54,6 +55,7 @@ class RdpRequest:
         default=None,
         repr=False,
     )
+    redirect_clipboard: bool = False
 
     def __post_init__(self) -> None:
         normalized, _is_ipv6 = _address(self.address)
@@ -61,14 +63,14 @@ class RdpRequest:
         _port(self.port)
         if (
             type(self.principal) is not str
-            or not self.principal
             or len(self.principal) > 256
+            or self.principal != self.principal.strip()
             or any(
                 ord(character) < 32 or ord(character) == 127
                 for character in self.principal
             )
         ):
-            raise ValueError("RDP principal must be safe and non-empty")
+            raise ValueError("RDP principal must be safe")
         if (
             self.credential_reference is not None
             and not isinstance(self.credential_reference, CredentialReference)
@@ -76,6 +78,8 @@ class RdpRequest:
             raise TypeError(
                 "credential_reference must be a CredentialReference or None"
             )
+        if type(self.redirect_clipboard) is not bool:
+            raise TypeError("redirect_clipboard must be a bool")
 
     @property
     def target(self) -> str:
@@ -95,6 +99,8 @@ class RdpLaunchPlan:
     credential_reference: CredentialReference | None = field(repr=False)
     credential_target: str = field(repr=False)
     principal: str = field(repr=False)
+    prompt_for_credentials: bool
+    redirect_clipboard: bool
     file_name: str
     file_bytes: bytes = field(repr=False)
 
@@ -113,21 +119,32 @@ class RdpLaunchPlan:
             raise ValueError("credential_target must match the native RDP target")
         if (
             type(self.principal) is not str
-            or not self.principal
             or len(self.principal) > 256
+            or self.principal != self.principal.strip()
             or any(
                 ord(character) < 32 or ord(character) == 127
                 for character in self.principal
             )
         ):
-            raise ValueError("RDP principal must be safe and non-empty")
+            raise ValueError("RDP principal must be safe")
+        if (
+            type(self.prompt_for_credentials) is not bool
+            or type(self.redirect_clipboard) is not bool
+        ):
+            raise TypeError("RDP launch flags must be bool values")
+        if self.prompt_for_credentials != (self.credential_reference is None):
+            raise ValueError("RDP credential prompt must match the request binding")
         if (
             type(self.file_name) is not str
-            or re.fullmatch(r"rdp_[A-Za-z0-9_]+\.rdp", self.file_name) is None
-            or self.file_name != _file_name(address)
+            or re.fullmatch(r"rcm_rdp_[0-9a-f]{32}\.rdp", self.file_name) is None
         ):
             raise ValueError("RDP file name is invalid")
-        if self.file_bytes != _rdp_bytes(self.target, self.principal):
+        if self.file_bytes != _rdp_bytes(
+            self.target,
+            self.principal,
+            prompt_for_credentials=self.prompt_for_credentials,
+            redirect_clipboard=self.redirect_clipboard,
+        ):
             raise ValueError("RDP file does not match its typed launch plan")
 
 
@@ -161,9 +178,13 @@ class RdpService:
         *,
         credentials: CredentialStore,
         launcher: RdpLauncher,
+        token_factory: Callable[[], str] | None = None,
     ) -> None:
         self._credentials = credentials
         self._launcher = launcher
+        self._token_factory = token_factory or (lambda: secrets.token_hex(16))
+        if not callable(self._token_factory):
+            raise TypeError("token_factory must be callable")
 
     def capability(self) -> Capability:
         return self._launcher.capability()
@@ -197,13 +218,27 @@ class RdpService:
                 raise RejectedError(
                     "the RDP credential reference binding does not match the request"
                 )
+        try:
+            token = self._token_factory()
+        except Exception:
+            raise UnavailableError("the RDP launch identity is unavailable") from None
+        if type(token) is not str or re.fullmatch(r"[0-9a-f]{32}", token) is None:
+            raise UnavailableError("the RDP launch identity is unavailable")
+        prompt = reference is None
         return RdpLaunchPlan(
             target=request.target,
             credential_reference=reference,
             credential_target=request.credential_target,
             principal=request.principal,
-            file_name=_file_name(request.address),
-            file_bytes=_rdp_bytes(request.target, request.principal),
+            prompt_for_credentials=prompt,
+            redirect_clipboard=request.redirect_clipboard,
+            file_name=_file_name(token),
+            file_bytes=_rdp_bytes(
+                request.target,
+                request.principal,
+                prompt_for_credentials=prompt,
+                redirect_clipboard=request.redirect_clipboard,
+            ),
         )
 
     def launch(self, request: RdpRequest) -> RdpLaunchReceipt:
@@ -218,12 +253,8 @@ class RdpService:
         self._launcher.cleanup_all()
 
 
-def _file_name(address: str) -> str:
-    token = re.sub(r"[^A-Za-z0-9]", "_", address)
-    if len(token) > 180:
-        suffix = hashlib.sha256(address.encode("ascii")).hexdigest()[:16]
-        token = f"{token[:180]}_{suffix}"
-    return f"rdp_{token}.rdp"
+def _file_name(token: str) -> str:
+    return f"rcm_rdp_{token}.rdp"
 
 
 def _parse_target(value: str) -> tuple[str, str]:
@@ -252,8 +283,14 @@ def _parse_target(value: str) -> tuple[str, str]:
     return address, f"{host}:{port}"
 
 
-def _rdp_bytes(target: str, principal: str) -> bytes:
-    lines = (
+def _rdp_bytes(
+    target: str,
+    principal: str,
+    *,
+    prompt_for_credentials: bool,
+    redirect_clipboard: bool,
+) -> bytes:
+    lines = [
         "screen mode id:i:2",
         "use multimon:i:0",
         # Keep Windows key combinations on the local desktop.  In a
@@ -265,11 +302,23 @@ def _rdp_bytes(target: str, principal: str) -> bytes:
         "desktopheight:i:720",
         "session bpp:i:32",
         f"full address:s:{target}",
-        "prompt for credentials:i:1",
+        f"prompt for credentials:i:{int(prompt_for_credentials)}",
         "authentication level:i:2",
         "enablecredsspsupport:i:1",
-        f"username:s:{principal}",
-    )
+        f"redirectclipboard:i:{int(redirect_clipboard)}",
+        "drivestoredirect:s:",
+        "devicestoredirect:s:",
+        "usbdevicestoredirect:s:",
+        "camerastoredirect:s:",
+        "audiocapturemode:i:0",
+        "redirectprinters:i:0",
+        "redirectcomports:i:0",
+        "redirectsmartcards:i:0",
+        "redirectwebauthn:i:0",
+        "redirectlocation:i:0",
+    ]
+    if principal:
+        lines.append(f"username:s:{principal}")
     return b"\xff\xfe" + ("\r\n".join(lines) + "\r\n").encode("utf-16-le")
 
 

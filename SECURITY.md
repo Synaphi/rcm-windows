@@ -29,7 +29,12 @@ The intended boundary is local-first:
 
 - health, temperature, and metrics HTTP endpoints, when composed, bind to
   `127.0.0.1` only;
-- RDP service plans are outbound launches and port preflight initiated locally;
+- RDP service plans are outbound launches and bounded TCP port preflight
+  initiated locally; RCM never accepts a remote password;
+- the native RDP client is resolved from the Windows system directory, launch
+  files have unpredictable application-owned names, sensitive device
+  redirection is off by default, and owned files are cleaned at shutdown and
+  the next startup;
 - the desktop application normally runs without elevation;
 - privileged local changes are disabled in the unsigned one-file preview;
 - configuration and logs remain in local application data, and configuration
@@ -41,6 +46,16 @@ The intended boundary is local-first:
 Any report showing a listener reachable beyond loopback, unbounded or persistent
 elevation, unsafe path handling, secret persistence, remote command execution,
 dependency-integrity bypass, or unintended data disclosure is security relevant.
+
+RDP launch files contain the destination and may contain the optional Windows
+user name. They are not credential stores, but they are still local operational
+metadata. Installed and portable runs isolate them under the current user's
+LocalAppData RCM directory; portable configuration and logs may still live
+beside the executable. Portable startup fails closed if that per-user metadata
+boundary is unavailable. A crash can leave launch files until the next RCM
+startup. Reports that show
+RCM deleting a non-owned file, launching a non-system `mstsc.exe`, accepting a
+password, or enabling a remote host are in scope.
 
 ## Out of scope and safe research
 

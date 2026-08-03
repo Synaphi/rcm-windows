@@ -14,6 +14,7 @@ class RdpDraft:
     principal: str
     port: int = 3_389
     credential_reference: str = ""
+    redirect_clipboard: bool = False
 
     def __post_init__(self) -> None:
         reference = (
@@ -22,7 +23,13 @@ class RdpDraft:
             else None
         )
         # The PR-06 request owns canonical validation.
-        RdpRequest(self.address, self.principal, self.port, reference)
+        RdpRequest(
+            self.address,
+            self.principal,
+            self.port,
+            reference,
+            self.redirect_clipboard,
+        )
 
     def to_request(self) -> RdpRequest:
         reference = (
@@ -35,8 +42,15 @@ class RdpDraft:
             principal=self.principal,
             port=self.port,
             credential_reference=reference,
+            redirect_clipboard=self.redirect_clipboard,
         )
 
 
 def rdp_fields() -> tuple[str, ...]:
-    return ("address", "principal", "port", "credential_reference")
+    return (
+        "address",
+        "principal",
+        "port",
+        "credential_reference",
+        "redirect_clipboard",
+    )

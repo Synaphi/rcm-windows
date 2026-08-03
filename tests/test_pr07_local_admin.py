@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import unittest
 
 from fake_test_kit.desktop import (
@@ -246,6 +247,11 @@ class LocalAdminServiceTests(unittest.TestCase):
         ) as caught:
             failing.contains(reference)
         self.assertNotIn(raw_value, str(caught.exception))
+
+    def test_rdp_metadata_uses_domain_password_credential_type(self) -> None:
+        source = inspect.getsource(WindowsCredentialStore._read_principal)
+        self.assertIn("CredReadW(target, 2, 0", source)
+        self.assertNotIn("CredReadW(target, 1, 0", source)
 
     def test_replacement_is_identity_planning_only_and_has_zero_privilege(self) -> None:
         first = "1" * 64

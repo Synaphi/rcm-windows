@@ -21,14 +21,8 @@ from .identity import ApplicationIdentity
 from .runtime import RuntimeCoordinator, RuntimeShutdownError
 from .ui.app import CommandHandler, LocalAdminCommandHandler, UiApplication
 from .ui.state import (
-    CommandResult,
-    LifecyclePhase,
-    NodeRenderState,
-    RenderState,
-    ResultStatus,
-    SettingsRenderState,
-    UiCommand,
-    UiVisibility,
+    CommandResult, LifecyclePhase, NodeRenderState, RenderState, ResultStatus,
+    SettingsRenderState, UiCommand, UiVisibility,
 )
 
 
@@ -205,11 +199,7 @@ class Application:
         if isinstance(value, bool) or not isinstance(value, int):
             raise TypeError("desktop host result must be an integer or None")
         return value
-def render_state_from_config(
-    config: Config,
-    *,
-    autostart: bool = False,
-) -> RenderState:
+def render_state_from_config(config: Config, *, autostart: bool = False) -> RenderState:
     if not isinstance(config, Config):
         raise TypeError("config must be a Config")
     nodes = tuple(
@@ -218,6 +208,7 @@ def render_state_from_config(
             node.node_id,
             node.role,
             "configured" if node.enabled else "disabled",
+            address=node.address,
         )
         for node in config.nodes.items
     )
@@ -225,6 +216,8 @@ def render_state_from_config(
     return RenderState(
         nodes=nodes,
         selected_node_id=selected,
+        rdp_port=config.rdp.port,
+        rdp_connect_timeout_seconds=config.rdp.connect_timeout_seconds,
         settings=SettingsRenderState(
             config.ui.theme,
             config.ui.scale_percent,
@@ -237,12 +230,9 @@ def render_state_from_config(
 def unavailable_command_handler(command: UiCommand) -> CommandResult:
     if not isinstance(command, UiCommand):
         raise TypeError("command must be a UiCommand")
-    return CommandResult(
-        command.command_id,
-        ResultStatus.FAILED,
-        "service_unavailable",
-        "This operation is not configured.",
-    )
+    return CommandResult(command.command_id, ResultStatus.FAILED,
+                         "service_unavailable",
+                         "This operation is not configured.")
 def main(
     *,
     start_minimized: bool = False,
@@ -252,11 +242,8 @@ def main(
     import sys
 
     from .adapters.windows_desktop import (
-        ExactOwnedFallback,
-        TkDesktopHost,
-        WindowsAutostart,
-        WindowsSingleton,
-    )
+        ExactOwnedFallback, TkDesktopHost, WindowsAutostart, WindowsSingleton)
+    from .adapters.windows import compose_native_rdp
     from .adapters.windows_admin import WindowsAdminObserver
     from .adapters.windows_broker import WindowsOneShotBroker
     from .bootstrap import Environment, select_deployment
@@ -277,27 +264,29 @@ def main(
         if lifecycle_scenario is not None
         else identity_for(select_deployment(environment, frozen=frozen))
     )
-    config = (
-        default_config()
-        if lifecycle_scenario is not None
-        else initialize_runtime_config(
-            host_bootstrap_plan(environment, frozen=frozen)
-        ).config
-    )
+    bootstrap_plan = (None if lifecycle_scenario is not None else
+                      host_bootstrap_plan(environment, frozen=frozen))
+    config = (default_config() if bootstrap_plan is None else
+              initialize_runtime_config(bootstrap_plan).config)
     if lifecycle_scenario is not None:
         autostart = False
         command_handler = unavailable_command_handler
+        runtime = RuntimeCoordinator(())
     else:
         autostart = WindowsAutostart().enabled(identity)
+        if bootstrap_plan is None:
+            raise RuntimeError("runtime bootstrap plan is unavailable")
+        rdp_handler, runtime = compose_native_rdp(
+            str(bootstrap_plan.paths.rdp_directory), unavailable_command_handler)
         local_admin = LocalAdminService(
             observer=WindowsAdminObserver(), broker=WindowsOneShotBroker())
         command_handler = LocalAdminCommandHandler(
-            local_admin, fallback=unavailable_command_handler)
+            local_admin, fallback=rdp_handler)
     ports = ApplicationPorts(
         identity=identity,
         host=TkDesktopHost(),
         singleton=WindowsSingleton(),
-        runtime=RuntimeCoordinator(()),
+        runtime=runtime,
         command_handler=command_handler,
         fallback=ExactOwnedFallback(lambda names, _timeout: not names),
     )

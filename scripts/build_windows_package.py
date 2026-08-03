@@ -29,8 +29,8 @@ ARTIFACT_NAME = "RayClusterManager-PR07.exe"
 WINDOWS_VERSION_RESOURCE = """# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 8, 3, 1),
-    prodvers=(2, 8, 3, 1),
+    filevers=(2, 8, 3, 2),
+    prodvers=(2, 8, 3, 2),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -45,11 +45,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'Synaphi'),
           StringStruct('FileDescription', 'Ray Cluster Manager Windows preview'),
-          StringStruct('FileVersion', '2.' + '8.' + '3.' + '1'),
+          StringStruct('FileVersion', '2.' + '8.' + '3.' + '2'),
           StringStruct('InternalName', 'RayClusterManager'),
-          StringStruct('OriginalFilename', 'RCM-2.08.03a-windows-x64.exe'),
+          StringStruct('OriginalFilename', 'RCM-2.08.03b-windows-x64.exe'),
           StringStruct('ProductName', 'Ray Cluster Manager'),
-          StringStruct('ProductVersion', '2.08.03a'),
+          StringStruct('ProductVersion', '2.08.03b'),
         ],
       )
     ]),
@@ -73,6 +73,7 @@ HIDDEN_IMPORTS = (
     "pystray",
     "ray_monitor",
     "rcm.adapters.local",
+    "rcm.adapters.windows",
     "rcm.adapters.windows_admin",
     "rcm.adapters.windows_broker",
     "rcm.adapters.windows_credentials",
@@ -87,6 +88,7 @@ HIDDEN_IMPORTS = (
     "rcm.local_admin",
     "rcm.privilege",
     "rcm.replacement",
+    "rcm.rdp",
     "rcm.resources",
     "rcm.setup",
     "rcm.ui",
@@ -114,6 +116,7 @@ REQUIRED_FROZEN_MODULES = (
     "rcm.__main__",
     "rcm.bootstrap",
     "rcm.adapters.local",
+    "rcm.adapters.windows",
     "rcm.adapters.windows_admin",
     "rcm.adapters.windows_broker",
     "rcm.adapters.windows_credentials",
@@ -131,6 +134,7 @@ REQUIRED_FROZEN_MODULES = (
     "rcm.paths",
     "rcm.privilege",
     "rcm.replacement",
+    "rcm.rdp",
     "rcm.resources",
     "rcm.setup",
     "rcm.ui",

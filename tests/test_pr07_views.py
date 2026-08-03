@@ -67,7 +67,13 @@ class ViewTests(unittest.TestCase):
             },
             {section.section_id for section in document.sections},
         )
-        self.assertIn("never asks for", document.section("rdp").body)
+        rdp_help = document.section("rdp").body
+        self.assertIn("never accepted or stored", rdp_help)
+        self.assertIn("Windows Pro", rdp_help)
+        self.assertIn(
+            "This preview composes personal outbound Remote Desktop",
+            document.section("preview-limits").body,
+        )
 
     def test_help_parser_rejects_duplicate_and_extra_shapes(self) -> None:
         with self.assertRaises(ValueError):

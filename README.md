@@ -10,9 +10,13 @@ GitHub prerelease, when published, is an unsigned standalone executable rather
 than an installer. Windows may show an unrecognized-publisher warning. The
 preview is not a signed, stable, supported, or fleet-ready release.
 
-The current preview identity is `2.08.03a` (`v2.08.03a`). Its exact asset
+The current preview identity is `2.08.03b` (`v2.08.03b`). Its exact asset
 name and verified checksum are published with the GitHub prerelease; do not use
 an executable whose name or SHA-256 differs from that release record.
+
+The `v2.08.03b` preview composes the personal-use outbound RDP client described
+below. Older assets, including `v2.08.03a`, do not contain that composed RDP
+flow. Always match the executable, tag, release notes, size, and SHA-256.
 
 ## What the packaged preview currently does
 
@@ -21,12 +25,13 @@ The executable currently provides:
 - a single-instance desktop and tray lifecycle with bounded shutdown;
 - a GUI setup wizard that creates and validates this PC's local configuration;
 - strict, integrity-checked loading of that configuration on later starts;
-- rendering of configured node records and read-only status/help surfaces; and
+- rendering of configured node records and read-only status/help surfaces;
+- a standard-user, outbound-only native Windows Remote Desktop flow; and
 - an isolated, non-elevated preview identity.
 
-The monitoring, cleanup, outbound RDP, Ray, and loopback HTTP implementations
-are present and tested as service modules, but their operational desktop
-commands are not yet composed into this packaged preview. A button that reports
+The monitoring, cleanup, Ray, and loopback HTTP implementations are present and
+tested as service modules, but their operational desktop commands are not yet
+composed into the published `v2.08.03b` preview. A button that reports
 `This operation is not configured` did not perform the requested operation.
 The Settings surface is read-only; use the setup wizard for the supported local
 fields. These limitations make this a developer preview, not a stable 1.x
@@ -38,14 +43,49 @@ automatic updates, telemetry, a background service, default inbound firewall
 rules, or an installer/update channel. Local administrator operations remain
 disabled in the unsigned one-file preview.
 
+## Personal Remote Desktop
+
+The current source composes a standard-user, outbound-only Windows Remote
+Desktop flow:
+
+1. Select a configured node in the main list, then select **RDP**. You can also
+   enter or replace the remote address directly in the RDP window.
+2. Enter an optional Windows user name and the RDP port. RCM never offers a
+   password field; enter credentials only in the Windows sign-in window.
+3. Leave clipboard sharing off unless you need it. Drive, generic/USB device,
+   camera, microphone, printer, COM-port, smart-card, WebAuthn, and location
+   redirection are explicitly disabled.
+4. Select **Check and connect**. RCM performs only a bounded TCP check of the
+   selected address and port. If the check fails, review the address, VPN,
+   firewall, and host state; **Connect anyway** lets Windows perform the final
+   diagnosis.
+
+The remote PC must support RDP hosting—normally Windows Pro or higher—have
+Remote Desktop enabled, be reachable on the selected port, and permit the
+Windows account. A Windows Home PC can be the client, but normally cannot be
+the RDP host. RCM does not enable the host, modify its firewall, grant user
+rights, or send a remote command.
+
+RCM launches the trusted `mstsc.exe` from the Windows system directory using a
+per-launch `.rdp` file in the current user's dedicated RCM data directory. The
+file contains the destination and optional user name, never a password, and is
+removed during normal shutdown or the next startup after an interrupted run.
+Because RCM and these files are unsigned, Windows or organizational policy may
+show a publisher warning or block the file. Do not weaken policy to bypass that
+decision.
+
+Addresses already present in the integrity-wrapped node configuration are
+available as RDP defaults. An address or user name typed only in the RDP window
+is session-only and is not added to `config.json`.
+
 ## Fast setup on another Windows PC
 
-1. Download `RCM-2.08.03a-windows-x64.exe` from the matching `v2.08.03a`
+1. Download `RCM-2.08.03b-windows-x64.exe` from the matching `v2.08.03b`
    prerelease. Compare its SHA-256 with the value on that release page before
    running it.
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\RCM-2.08.03a-windows-x64.exe).Hash.ToLowerInvariant()
+(Get-FileHash -Algorithm SHA256 .\RCM-2.08.03b-windows-x64.exe).Hash.ToLowerInvariant()
 ```
 
 The printed value must exactly match the SHA-256 published for that asset.
@@ -57,7 +97,7 @@ The printed value must exactly match the SHA-256 published for that asset.
    from PowerShell:
 
 ```powershell
-Start-Process -FilePath .\RCM-2.08.03a-windows-x64.exe -ArgumentList '--configure' -Wait
+Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe -ArgumentList '--configure' -Wait
 ```
 
 4. Enter only this PC's node ID, address or host name, role, optional CPU count,
@@ -72,10 +112,17 @@ session before both setup and normal startup. Set it again for every later
 launch; double-clicking the executable or using a new shell without this
 environment variable selects the installed layout instead.
 
+Portable mode keeps configuration and logs in the portable `data` directory,
+but temporary RDP launch files always remain under the current user's
+`%LOCALAPPDATA%\RayClusterManager\rdp` directory so a shared portable folder
+does not expose their destination or optional user-name metadata. Portable
+startup fails closed if a distinct per-user LocalAppData location is
+unavailable.
+
 ```powershell
 $env:RCM_PORTABLE = '1'
-Start-Process -FilePath .\RCM-2.08.03a-windows-x64.exe -ArgumentList '--configure' -Wait
-Start-Process -FilePath .\RCM-2.08.03a-windows-x64.exe
+Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe -ArgumentList '--configure' -Wait
+Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe
 ```
 
 The wizard never accepts a password, token, credential, firewall change, remote

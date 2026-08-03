@@ -38,11 +38,12 @@ def _contracts() -> dict[str, object]:
 
 
 class FrozenCharacterizationParityTests(unittest.TestCase):
-    def test_rdp_plan_matches_frozen_native_file_contract(self) -> None:
+    def test_rdp_plan_preserves_endpoint_and_keyboard_contract(self) -> None:
         frozen = _contracts()["rdp"]
         service = RdpService(
             credentials=_UnusedCredentials(),
             launcher=_UnusedLauncher(),
+            token_factory=lambda: "1" * 32,
         )
         request = RdpRequest(
             "192.0.2.44",
@@ -52,17 +53,28 @@ class FrozenCharacterizationParityTests(unittest.TestCase):
 
         plan = service.plan(request)
 
-        self.assertEqual(frozen["file_name"], plan.file_name)
+        self.assertEqual(f"rcm_rdp_{'1' * 32}.rdp", plan.file_name)
         self.assertEqual(frozen["ipv4_target"], plan.target)
         expected_lines = list(frozen["file_lines"])
         expected_lines.insert(2, "keyboardhook:i:0")
+        username = expected_lines.pop()
+        expected_lines.extend((
+            "redirectclipboard:i:0",
+            "drivestoredirect:s:",
+            "devicestoredirect:s:",
+            "usbdevicestoredirect:s:",
+            "camerastoredirect:s:",
+            "audiocapturemode:i:0",
+            "redirectprinters:i:0",
+            "redirectcomports:i:0",
+            "redirectsmartcards:i:0",
+            "redirectwebauthn:i:0",
+            "redirectlocation:i:0",
+            username,
+        ))
         self.assertEqual(
             expected_lines,
             plan.file_bytes.decode("utf-16").splitlines(),
-        )
-        self.assertEqual(
-            frozen["launch_args"],
-            ["mstsc.exe", plan.file_name],
         )
         self.assertEqual(
             frozen["ipv6_target"],

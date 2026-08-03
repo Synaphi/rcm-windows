@@ -38,6 +38,7 @@ EXPECTED_REQUIRED_MODULES = [
     "rcm.__main__",
     "rcm.bootstrap",
     "rcm.adapters.local",
+    "rcm.adapters.windows",
     "rcm.adapters.windows_admin",
     "rcm.adapters.windows_broker",
     "rcm.adapters.windows_credentials",
@@ -55,6 +56,7 @@ EXPECTED_REQUIRED_MODULES = [
     "rcm.paths",
     "rcm.privilege",
     "rcm.replacement",
+    "rcm.rdp",
     "rcm.resources",
     "rcm.setup",
     "rcm.ui",
@@ -442,16 +444,16 @@ def _load_contract(root: Path) -> dict[str, object]:
         raise CandidateError("tracked bundle contract schema is not exact")
     if bundle.get("release") != {
         "channel": "preview",
-        "package_version": "2.8.3a1",
-        "display_version": "2.08.03a",
-        "release_id": "rcm-2-2026-08-03-a",
-        "tag": "v2.08.03a",
-        "sequence": 2026080301,
-        "asset": "RCM-2.08.03a-windows-x64.exe",
+        "package_version": "2.8.3b1",
+        "display_version": "2.08.03b",
+        "release_id": "rcm-2-2026-08-03-b",
+        "tag": "v2.08.03b",
+        "sequence": 2026080302,
+        "asset": "RCM-2.08.03b-windows-x64.exe",
         "windows_version": ".".join(
-            str(part) for part in (2, 8, 3, 1)
+            str(part) for part in (2, 8, 3, 2)
         ),
-        "windows_tuple": [2, 8, 3, 1],
+        "windows_tuple": [2, 8, 3, 2],
         "architecture": "x86_64",
         "prerelease": True,
         "authenticode": False,
@@ -1196,6 +1198,7 @@ def _configuration_check_receipt(
             raise CandidateError("configuration root is not regular")
         temp_root = root / "onefile-temp"
         temp_root.mkdir()
+        local_root = root / "local-app-data"
         if deployment == "portable":
             run_root = root / "portable"
             run_root.mkdir()
@@ -1204,7 +1207,6 @@ def _configuration_check_receipt(
             config_path = run_root / "data" / "config.json"
         else:
             candidate = executable
-            local_root = root / "local-app-data"
             config_path = local_root / "RayClusterManager" / "config.json"
         if (
             candidate.stat().st_size != expected_size
@@ -1227,13 +1229,12 @@ def _configuration_check_receipt(
             "PYTHONNOUSERSITE": "1",
             "RCM_INTERNAL_CONFIGURATION_CHECK": "1",
             "RCM_NETWORK_POLICY": "deny",
+            "LOCALAPPDATA": str(local_root),
             "TEMP": str(temp_root),
             "TMP": str(temp_root),
         })
         if deployment == "portable":
             base_environment["RCM_PORTABLE"] = "1"
-        else:
-            base_environment["LOCALAPPDATA"] = str(local_root)
         maximum_connections = 0
         maximum_listeners = 0
         maximum_descendants = 0

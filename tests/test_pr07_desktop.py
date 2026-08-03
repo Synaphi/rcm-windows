@@ -4,6 +4,8 @@ from collections.abc import Callable
 import ctypes
 import inspect
 import os
+from threading import Event
+import time
 from types import SimpleNamespace
 from unittest import mock
 import unittest
@@ -34,7 +36,15 @@ from rcm.desktop import (
 from rcm.identity import DeploymentKind, identity_for
 from rcm.runtime import RuntimeCoordinator, RuntimeUnit
 from rcm.ui.scheduler import BoundedEventQueue, PostStatus, UiScheduler
-from rcm.ui.state import CommandKind, RenderState, UiCommand, UiVisibility
+from rcm.ui.rdp_dialog import RdpDraft
+from rcm.ui.state import (
+    CommandKind,
+    NodeRenderState,
+    RenderState,
+    Surface,
+    UiCommand,
+    UiVisibility,
+)
 
 
 class FakeHost:
@@ -153,6 +163,234 @@ class FakeFallback:
 
 
 class DesktopTests(unittest.TestCase):
+    def test_real_tk_rdp_form_builds_hidden_with_selected_node_defaults(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows Tk dialog contract")
+        import tkinter as tk
+
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f"Tk is unavailable: {exc}")
+        root.withdraw()
+        tray = SimpleNamespace(
+            start=lambda: None,
+            stop=lambda: None,
+            set_title=lambda _title: None,
+        )
+        host = TkDesktopHost(
+            root=root,
+            tray_factory=lambda _show, _quit: tray,
+            rdp_probe=lambda _address, _port, _timeout: True,
+        )
+        observed: list[UiCommand] = []
+        host.bind(observed.append)
+        state = RenderState(
+            nodes=(NodeRenderState(
+                "worker", "WORKER", "worker", "configured",
+                address="192.0.2.20",
+            ),),
+            selected_node_id="worker",
+            open_surfaces=(Surface.RDP,),
+        )
+        try:
+            host.render(state)
+            root.update_idletasks()
+
+            self.assertIsNotNone(host._rdp_form)
+            self.assertEqual("192.0.2.20", host._rdp_form["address"].get())
+            self.assertEqual("3389", host._rdp_form["port"].get())
+            self.assertFalse(host._rdp_form["clipboard"].get())
+            self.assertEqual((), tuple(observed))
+            host._rdp_probe_generation = 1
+            host._finish_rdp_preflight(
+                1,
+                RdpDraft("192.0.2.20", "", 3_389),
+                True,
+            )
+            self.assertEqual(CommandKind.OPEN_RDP, observed[0].kind)
+            self.assertEqual("192.0.2.20", observed[0].field("address"))
+        finally:
+            host.dispose()
+
+    def test_rdp_preflight_ignores_stale_completion(self) -> None:
+        host = object.__new__(TkDesktopHost)
+        host._rdp_probe_generation = 2
+        host._rdp_form = {
+            "dialog": SimpleNamespace(winfo_exists=lambda: True),
+            "connect": mock.Mock(),
+            "status": mock.Mock(),
+            "anyway": mock.Mock(),
+            "probe_timer": None,
+            "inflight": True,
+        }
+        host._launch_rdp = mock.Mock()
+        draft = RdpDraft("worker.example", "", 3_389)
+        host._rdp_draft = mock.Mock(return_value=draft)
+
+        host._finish_rdp_preflight(1, draft, True)
+
+        host._launch_rdp.assert_not_called()
+        host._rdp_form["connect"].configure.assert_not_called()
+
+        host._finish_rdp_preflight(2, draft, True)
+
+        host._launch_rdp.assert_called_once_with(draft)
+
+    def test_rdp_preflight_rejects_every_edited_draft_field(self) -> None:
+        original = RdpDraft(
+            "old.example",
+            r"OLD\user",
+            3_389,
+            redirect_clipboard=True,
+        )
+        changes = (
+            RdpDraft(
+                "new.example",
+                original.principal,
+                original.port,
+                redirect_clipboard=True,
+            ),
+            RdpDraft(
+                original.address,
+                r"NEW\user",
+                original.port,
+                redirect_clipboard=True,
+            ),
+            RdpDraft(
+                original.address,
+                original.principal,
+                3_390,
+                redirect_clipboard=True,
+            ),
+            RdpDraft(
+                original.address,
+                original.principal,
+                original.port,
+                redirect_clipboard=False,
+            ),
+        )
+        for current in changes:
+            with self.subTest(current=current):
+                host = object.__new__(TkDesktopHost)
+                host._rdp_probe_generation = 7
+                host._root = SimpleNamespace(after_cancel=lambda _token: None)
+                host._rdp_form = {
+                    "dialog": SimpleNamespace(winfo_exists=lambda: True),
+                    "connect": mock.Mock(),
+                    "status": mock.Mock(),
+                    "anyway": mock.Mock(),
+                    "probe_timer": object(),
+                    "inflight": True,
+                }
+                host._rdp_draft = mock.Mock(return_value=current)
+                host._launch_rdp = mock.Mock()
+
+                host._finish_rdp_preflight(7, original, True)
+
+                host._launch_rdp.assert_not_called()
+                self.assertEqual(8, host._rdp_probe_generation)
+                host._rdp_form["connect"].configure.assert_called_with(
+                    state="normal"
+                )
+                host._rdp_form["anyway"].configure.assert_called_with(
+                    state="disabled"
+                )
+                host._rdp_form["status"].set.assert_called_with(
+                    "Connection details changed. Check the current values again."
+                )
+
+    def test_rdp_preflight_ignores_enter_reentry_while_inflight(self) -> None:
+        host = object.__new__(TkDesktopHost)
+        host._rdp_form = {"inflight": True}
+        host._rdp_draft = mock.Mock(
+            side_effect=AssertionError("inflight probe was restarted")
+        )
+
+        host._begin_rdp_preflight()
+
+        host._rdp_draft.assert_not_called()
+
+    def test_rdp_probe_bounds_blocking_name_resolution(self) -> None:
+        release = Event()
+        started = Event()
+
+        def block(*_args: object, **_kwargs: object) -> list[object]:
+            started.set()
+            release.wait(1.0)
+            return []
+
+        began = time.monotonic()
+        try:
+            with mock.patch("socket.getaddrinfo", side_effect=block):
+                self.assertFalse(
+                    windows_desktop._tcp_rdp_probe(
+                        "worker.example", 3_389, 0.02
+                    )
+                )
+            self.assertTrue(started.is_set())
+            self.assertLess(time.monotonic() - began, 0.5)
+        finally:
+            release.set()
+            with windows_desktop._RDP_DNS_THREADS_LOCK:
+                resolvers = tuple(windows_desktop._RDP_DNS_THREADS)
+            for resolver in resolvers:
+                resolver.join(1.0)
+
+    def test_rdp_probe_opens_and_closes_only_requested_endpoint(self) -> None:
+        connection = mock.Mock()
+        with (
+            mock.patch(
+                "socket.getaddrinfo",
+                return_value=[(2, 1, 6, "", ("192.0.2.20", 3_390))],
+            ) as resolve,
+            mock.patch("socket.socket", return_value=connection) as create,
+        ):
+            self.assertTrue(
+                windows_desktop._tcp_rdp_probe(
+                    "worker.example", 3_390, 4.0
+                )
+            )
+        resolve.assert_called_once_with(
+            "worker.example",
+            3_390,
+            family=0,
+            type=1,
+            proto=6,
+        )
+        create.assert_called_once_with(2, 1, 6)
+        connection.settimeout.assert_called_once()
+        connection.connect.assert_called_once_with(("192.0.2.20", 3_390))
+        connection.close.assert_called_once_with()
+
+    def test_rdp_probe_uses_one_deadline_across_resolved_addresses(self) -> None:
+        first = mock.Mock()
+        second = mock.Mock()
+        first.connect.side_effect = OSError("synthetic first failure")
+        second.connect.side_effect = OSError("synthetic second failure")
+        addresses = [
+            (2, 1, 6, "", ("192.0.2.20", 3_389)),
+            (2, 1, 6, "", ("192.0.2.21", 3_389)),
+        ]
+        with (
+            mock.patch("socket.getaddrinfo", return_value=addresses),
+            mock.patch("socket.socket", side_effect=(first, second)),
+            mock.patch.object(
+                windows_desktop.time,
+                "monotonic",
+                side_effect=(100.0, 100.0, 100.0, 101.5),
+            ),
+        ):
+            self.assertFalse(
+                windows_desktop._tcp_rdp_probe(
+                    "worker.example", 3_389, 2.0
+                )
+            )
+        first.settimeout.assert_called_once_with(2.0)
+        second.settimeout.assert_called_once_with(0.5)
+        first.close.assert_called_once_with()
+        second.close.assert_called_once_with()
+
     def test_tk_host_exposes_only_the_two_local_admin_apply_intents(
         self,
     ) -> None:
@@ -187,13 +425,17 @@ class DesktopTests(unittest.TestCase):
                 title="Ray Cluster Manager",
                 status="Ready",
                 node_lines=(),
+                actions=(),
+                selected_node_id="",
             )
         )
         host._title = mock.Mock()
         host._status = mock.Mock()
         host._nodes = mock.Mock()
+        host._buttons = []
         host._tray = mock.Mock()
         host._sync_dialogs = mock.Mock()
+        host._sync_rdp_selection = mock.Mock()
 
         host.render(RenderState())
 

@@ -51,7 +51,7 @@ class MainWindowView:
                     not state.busy
                     and (
                         action.surface is None
-                        or action.surface not in {Surface.NODE, Surface.RDP}
+                        or action.surface is not Surface.NODE
                         or bool(state.selected_node_id)
                     )
                 ),

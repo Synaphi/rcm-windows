@@ -270,7 +270,8 @@ class IntegratedCoreRuntimeTests(unittest.TestCase):
                 from rcm.adapters.windows import WindowsRdpLauncher
                 from rcm.core import CapabilityState
                 capability = WindowsRdpLauncher(
-                    filesystem=object(), directory="synthetic-rdp",
+                    filesystem=object(), directory=r"C:\\Synthetic\\Rdp",
+                    executable=r"C:\\Synthetic\\System32\\mstsc.exe",
                 ).capability()
                 assert capability.state in tuple(CapabilityState)
                 assert "ray" not in sys.modules

@@ -48,7 +48,10 @@ class SettingsTests(unittest.TestCase):
         fields = rdp_fields()
         self.assertNotIn("password", fields)
         self.assertEqual(
-            ("address", "principal", "port", "credential_reference"),
+            (
+                "address", "principal", "port", "credential_reference",
+                "redirect_clipboard",
+            ),
             fields,
         )
 

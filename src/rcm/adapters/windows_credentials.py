@@ -118,7 +118,9 @@ class WindowsCredentialStore:
         advapi32.CredReadW.restype = wintypes.BOOL
         advapi32.CredFree.argtypes = (ctypes.c_void_p,)
         pointer = ctypes.POINTER(_Credential)()
-        if not advapi32.CredReadW(target, 1, 0, ctypes.byref(pointer)):
+        # RDP uses the Windows authentication packages, whose credential type
+        # is CRED_TYPE_DOMAIN_PASSWORD rather than CRED_TYPE_GENERIC.
+        if not advapi32.CredReadW(target, 2, 0, ctypes.byref(pointer)):
             if ctypes.get_last_error() == 1168:
                 return None
             raise RuntimeError("credential metadata query failed")

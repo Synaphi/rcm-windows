@@ -14,7 +14,7 @@
     {
       "id": "rdp",
       "title": "Remote Desktop",
-      "body": "Remote Desktop uses an opaque stored credential reference. This application never asks for or displays a remote password."
+      "body": "Select a node or enter a remote address, optional Windows user name, and port. Check and connect performs only a bounded TCP port check; Connect anyway lets Windows diagnose a failed check. Passwords are entered only in the Windows sign-in window and are never accepted or stored by RCM. Clipboard sharing is opt-in; drives, generic and USB devices, cameras, microphones, printers, COM ports, smart cards, WebAuthn, and location redirection stay off. The remote PC normally needs Windows Pro or higher, Remote Desktop enabled, network reachability, and an allowed user. RCM does not configure the host. Unsigned RDP files may show a Windows warning or be blocked by policy."
     },
     {
       "id": "cleanup",
@@ -29,7 +29,7 @@
     {
       "id": "preview-limits",
       "title": "Preview limits",
-      "body": "The current packaged preview demonstrates the desktop and validated local configuration foundation. Service buttons that report unavailable are not configured in this build; it is not a fleet agent or a replacement for an existing 1.x deployment."
+      "body": "This preview composes personal outbound Remote Desktop but remains a local desktop preview. Other service buttons that report unavailable are not configured in this build; it is not a fleet agent or a replacement for an existing 1.x deployment."
     }
   ]
 }

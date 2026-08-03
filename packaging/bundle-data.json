@@ -4,18 +4,18 @@
   "source_root": "src/rcm",
   "release": {
     "channel": "preview",
-    "package_version": "2.8.3a1",
-    "display_version": "2.08.03a",
-    "release_id": "rcm-2-2026-08-03-a",
-    "tag": "v2.08.03a",
-    "sequence": 2026080301,
-    "asset": "RCM-2.08.03a-windows-x64.exe",
-    "windows_version": "2.8.3.1",
+    "package_version": "2.8.3b1",
+    "display_version": "2.08.03b",
+    "release_id": "rcm-2-2026-08-03-b",
+    "tag": "v2.08.03b",
+    "sequence": 2026080302,
+    "asset": "RCM-2.08.03b-windows-x64.exe",
+    "windows_version": "2.8.3.2",
     "windows_tuple": [
       2,
       8,
       3,
-      1
+      2
     ],
     "architecture": "x86_64",
     "prerelease": true,
@@ -30,17 +30,17 @@
   "candidate": {
     "state": "frozen",
     "file": "RayClusterManager-PR07.exe",
-    "size": 21149621,
-    "sha256": "9f77be7788ef741da2e2b7b6c638446ffab9094bba751af67cb828d4f64641c5",
-    "public_source_snapshot_sha256": "1e7a65c694a55079fe61403cfccc60b0a57049abdc832aac58ec55e46426a925",
-    "package_manifest_sha256": "3abd4745ae618a810af258fcdc8754ff8a8213cd92984354ffa1b00c627a4146",
+    "size": 21168761,
+    "sha256": "ba7510dfa6f410f64bd5fe0074ee894d06bdaddd32116352c012eb6f6c81484c",
+    "public_source_snapshot_sha256": "525f33991b3d9c040afcd5e001b13f800e94412c147fe65fc9ca7c5fd7a43c68",
+    "package_manifest_sha256": "9f6385149ef0a24c564b961dc1e3db15c486f87bc81f51e511536d4c72eb7ced",
     "local_admin_elevation_enabled": false,
     "verification": {
       "visible_quit_cycles": 50,
       "hidden_show_quit_cycles": 25,
       "minimized_show_quit_cycles": 25,
       "passed_cycles": 100,
-      "evidence_sha256": "054578872dbc97cbeb639e6f178809349929f3b121cf9043ed7c48faed638fd5"
+      "evidence_sha256": "730f5354357d7e5df3aef8d357654f1a105cf81ef086b8405ec640297f0c29e6"
     },
     "blockers": []
   }

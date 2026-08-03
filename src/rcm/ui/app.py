@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ..core import RejectedError, UnavailableError, UnsupportedError
 from ..desktop import DesktopHost, UiThreadGuard
 from ..local_admin import LocalAdminService
 from ..privilege import LOCAL_ADMIN_ELEVATION_ENABLED, PrivilegeStatus
+from ..rdp import RdpRequest, RdpService
 from .scheduler import PostStatus, UiScheduler
 from .state import (
     CommandKind,
@@ -26,6 +28,51 @@ from .state import (
 
 CommandHandler = Callable[[UiCommand], CommandResult | None]
 QuitHandler = Callable[[bool], None]
+
+
+class RdpCommandHandler:
+    """Launch only typed, password-free native RDP requests."""
+
+    def __init__(self, service: RdpService, *, fallback: CommandHandler) -> None:
+        if not isinstance(service, RdpService) or not callable(fallback):
+            raise TypeError("RDP handler dependencies are invalid")
+        self._service = service
+        self._fallback = fallback
+
+    def __call__(self, command: UiCommand) -> CommandResult | None:
+        if not isinstance(command, UiCommand):
+            raise TypeError("command must be a UiCommand")
+        if command.kind is not CommandKind.OPEN_RDP:
+            return self._fallback(command)
+        try:
+            request = RdpRequest(
+                address=command.field("address"),
+                principal=command.field("principal", ""),
+                port=command.field("port", 3_389),
+                redirect_clipboard=command.field("redirect_clipboard", False),
+            )
+        except (TypeError, ValueError):
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                "rdp_request_invalid",
+                "Check the Remote Desktop address, user name, and port.",
+            )
+        try:
+            self._service.launch(request)
+        except (RejectedError, UnavailableError, UnsupportedError):
+            return CommandResult(
+                command.command_id,
+                ResultStatus.FAILED,
+                "rdp_unavailable",
+                "Windows Remote Desktop could not be opened.",
+            )
+        return CommandResult(
+            command.command_id,
+            ResultStatus.SUCCEEDED,
+            "rdp_opened",
+            "Windows Remote Desktop was opened.",
+        )
 
 
 class LocalAdminCommandHandler:
@@ -245,6 +292,9 @@ class UiApplication:
         if command.kind in {CommandKind.OPEN_SURFACE, CommandKind.CLOSE_SURFACE}:
             self._change_surface(command)
             return True
+        if command.kind is CommandKind.SELECT_NODE:
+            self._select_node(command)
+            return True
         if command.kind in {CommandKind.QUIT, CommandKind.RESTART}:
             restarting = command.kind is CommandKind.RESTART
             self._state = self._state.evolve(
@@ -259,6 +309,15 @@ class UiApplication:
             self._quit_handler(restarting)
             return True
         return False
+
+    def _select_node(self, command: UiCommand) -> None:
+        node_id = command.field("node_id")
+        if type(node_id) is not str or node_id not in {
+            node.node_id for node in self._state.nodes
+        }:
+            raise ValueError("node selection requires a rendered node identifier")
+        self._state = self._state.evolve(selected_node_id=node_id)
+        self._render()
 
     def _set_visibility(self, visibility: UiVisibility) -> None:
         self._state = self._state.evolve(visibility=visibility)

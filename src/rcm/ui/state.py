@@ -46,6 +46,7 @@ class CommandKind(StrEnum):
     MINIMIZE = "minimize"
     OPEN_SURFACE = "open_surface"
     CLOSE_SURFACE = "close_surface"
+    SELECT_NODE = "select_node"
     SAVE_SETTINGS = "save_settings"
     UPSERT_NODE = "upsert_node"
     REMOVE_NODE = "remove_node"
@@ -160,6 +161,7 @@ class NodeRenderState:
     cpu_percent: float | None = None
     memory_percent: float | None = None
     temperature_celsius: float | None = None
+    address: str = ""
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -169,6 +171,7 @@ class NodeRenderState:
             ("status", self.status),
         ):
             _text(value, name, allow_empty=False)
+        _text(self.address, "address")
         for name, value in (
             ("cpu_percent", self.cpu_percent),
             ("memory_percent", self.memory_percent),
@@ -214,6 +217,8 @@ class RenderState:
     status_message: str = "Ready"
     nodes: tuple[NodeRenderState, ...] = ()
     selected_node_id: str = ""
+    rdp_port: int = 3_389
+    rdp_connect_timeout_seconds: int = 10
     settings: SettingsRenderState = SettingsRenderState()
     open_surfaces: tuple[Surface, ...] = ()
     last_result: CommandResult | None = None
@@ -241,6 +246,15 @@ class RenderState:
             raise ValueError("node identifiers must be unique")
         if self.selected_node_id and self.selected_node_id not in identifiers:
             raise ValueError("selected_node_id must identify a rendered node")
+        if type(self.rdp_port) is not int or not 1 <= self.rdp_port <= 65_535:
+            raise ValueError("rdp_port must be between 1 and 65535")
+        if (
+            type(self.rdp_connect_timeout_seconds) is not int
+            or not 1 <= self.rdp_connect_timeout_seconds <= 300
+        ):
+            raise ValueError(
+                "rdp_connect_timeout_seconds must be between 1 and 300"
+            )
         if not isinstance(self.settings, SettingsRenderState):
             raise TypeError("settings must be a SettingsRenderState")
         surfaces = tuple(self.open_surfaces)

@@ -185,16 +185,16 @@ class WindowsPackageBuildTests(unittest.TestCase):
             package_build.hashlib.sha256(version_data).hexdigest(),
             version_digest,
         )
-        self.assertIn(b"filevers=(2, 8, 3, 1)", version_data)
+        self.assertIn(b"filevers=(2, 8, 3, 2)", version_data)
         self.assertIn(
-            b"FileVersion', '2.' + '8.' + '3.' + '1'",
+            b"FileVersion', '2.' + '8.' + '3.' + '2'",
             version_data,
         )
         self.assertIn(
-            b"OriginalFilename', 'RCM-2.08.03a-windows-x64.exe'",
+            b"OriginalFilename', 'RCM-2.08.03b-windows-x64.exe'",
             version_data,
         )
-        self.assertIn(b"ProductVersion', '2.08.03a'", version_data)
+        self.assertIn(b"ProductVersion', '2.08.03b'", version_data)
 
         verifier_source = inspect.getsource(candidate_verify._main_window_state)
         self.assertIn("IsWindow", verifier_source)
@@ -504,6 +504,7 @@ class WindowsPackageBuildTests(unittest.TestCase):
             source,
         )
         self.assertIn('for deployment in ("installed", "portable")', source)
+        self.assertIn('"LOCALAPPDATA": str(local_root)', source)
         self.assertIn("first_ready - started > 5.0", source)
         self.assertIn("finished - first_ready > 5.0", source)
         self.assertIn("maximum_descendants != 1", source)

@@ -123,6 +123,7 @@ class RuntimePaths:
     current_binary: PurePath
     config_directory: PurePath
     log_directory: PurePath
+    rdp_directory: PurePath
     config_file: PurePath
     application_log: PurePath
     trouble_log: PurePath
@@ -154,6 +155,17 @@ def plan_runtime_paths(
     resources = absolute_local_path(resource_root, label="resource root")
     binary = absolute_local_path(current_binary, label="current binary")
 
+    if (
+        identity.deployment is DeploymentKind.PORTABLE
+        and known_folders.local_app_data in {
+            app_root,
+            binary.parent,
+        }
+    ):
+        raise ValueError(
+            "portable RDP artifacts require per-user LocalAppData"
+        )
+
     if identity.deployment is DeploymentKind.PORTABLE:
         config_directory = app_root / "data"
     else:
@@ -161,6 +173,9 @@ def plan_runtime_paths(
             known_folders.local_app_data / identity.config_namespace
         )
     log_directory = config_directory / "logs"
+    rdp_directory = (
+        known_folders.local_app_data / identity.config_namespace / "rdp"
+    )
 
     return RuntimePaths(
         application_root=app_root,
@@ -168,6 +183,7 @@ def plan_runtime_paths(
         current_binary=binary,
         config_directory=config_directory,
         log_directory=log_directory,
+        rdp_directory=rdp_directory,
         config_file=config_directory / "config.json",
         application_log=log_directory / "ray_monitor.log",
         trouble_log=log_directory / "trouble_log.log",
@@ -192,6 +208,7 @@ def directory_plan(paths: RuntimePaths) -> tuple[EnsureDirectory, ...]:
     return (
         EnsureDirectory(paths.config_directory),
         EnsureDirectory(paths.log_directory),
+        EnsureDirectory(paths.rdp_directory),
     )
 
 

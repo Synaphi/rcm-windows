@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -28,7 +29,9 @@ from rcm.config.schema import (
     default_config,
 )
 from rcm.local_admin import LocalAdminService
-from rcm.ui.app import LocalAdminCommandHandler, UiApplication
+from rcm.rdp import RdpLaunchReceipt, RdpService
+from rcm.runtime import RuntimeCoordinator
+from rcm.ui.app import LocalAdminCommandHandler, RdpCommandHandler, UiApplication
 from rcm.ui.state import (
     CommandKind,
     CommandResult,
@@ -79,6 +82,102 @@ class IntegratedHost:
 
 
 class IntegratedUiTests(unittest.TestCase):
+    def test_rdp_command_handler_launches_only_password_free_typed_request(
+        self,
+    ) -> None:
+        class Credentials:
+            def contains(self, _reference: object) -> bool:
+                raise AssertionError("credential lookup is not expected")
+
+            def resolve(self, _reference: object) -> object:
+                raise AssertionError("credential lookup is not expected")
+
+        class Launcher:
+            def __init__(self) -> None:
+                self.plans = []
+
+            def capability(self) -> object:
+                return object()
+
+            def launch(self, plan: object) -> RdpLaunchReceipt:
+                self.plans.append(plan)
+                return RdpLaunchReceipt(41_101, r"C:\Synthetic\owned.rdp")
+
+            def cleanup(self, _receipt: object) -> None:
+                return None
+
+            def cleanup_all(self) -> None:
+                return None
+
+        launcher = Launcher()
+        service = RdpService(
+            credentials=Credentials(),
+            launcher=launcher,
+            token_factory=lambda: "1" * 32,
+        )
+        fallbacks: list[UiCommand] = []
+        handler = RdpCommandHandler(
+            service,
+            fallback=lambda command: fallbacks.append(command),
+        )
+
+        result = handler(UiCommand(
+            1,
+            CommandKind.OPEN_RDP,
+            (
+                ("address", "worker.example"),
+                ("principal", ""),
+                ("port", 3_390),
+                ("redirect_clipboard", True),
+            ),
+        ))
+        handler(UiCommand(2, CommandKind.START))
+
+        self.assertEqual("rdp_opened", result.code)
+        self.assertEqual([], [
+            field for field in UiCommand.__dataclass_fields__
+            if "password" in field
+        ])
+        self.assertEqual("worker.example:3390", launcher.plans[0].target)
+        self.assertTrue(launcher.plans[0].redirect_clipboard)
+        self.assertEqual([CommandKind.START], [item.kind for item in fallbacks])
+
+    def test_node_selection_updates_rdp_default_without_service_call(self) -> None:
+        config = replace(
+            default_config(),
+            nodes=NodesSection(
+                (
+                    Node("head", "192.0.2.10", "head"),
+                    Node("worker", "192.0.2.20", "worker"),
+                ),
+                "head",
+            ),
+        )
+        host = IntegratedHost()
+        handled: list[UiCommand] = []
+        ui = UiApplication(
+            host=host,
+            command_handler=lambda command: handled.append(command),
+            quit_handler=lambda _restart: None,
+            initial_state=render_state_from_config(config),
+        )
+        ui.start()
+
+        host.command(UiCommand(
+            1,
+            CommandKind.SELECT_NODE,
+            (("node_id", "worker"),),
+        ))
+
+        self.assertEqual("worker", ui.state.selected_node_id)
+        selected = next(
+            node for node in ui.state.nodes
+            if node.node_id == ui.state.selected_node_id
+        )
+        self.assertEqual("192.0.2.20", selected.address)
+        self.assertEqual([], handled)
+        ui.stop()
+
     def test_disabled_elevation_is_reported_as_secure_packaging_required(
         self,
     ) -> None:
@@ -143,6 +242,8 @@ class IntegratedUiTests(unittest.TestCase):
     ) -> None:
         boundary = FakePrivilegeBoundary()
         host = FakeDesktopHost()
+        rdp_runtime = RuntimeCoordinator(())
+        rdp_composer = mock.Mock(return_value=(mock.Mock(), rdp_runtime))
         with (
             mock.patch(
                 "rcm.adapters.windows_desktop.TkDesktopHost",
@@ -170,11 +271,19 @@ class IntegratedUiTests(unittest.TestCase):
             ),
             mock.patch(
                 "rcm.setup.host_bootstrap_plan",
-                return_value=object(),
+                return_value=SimpleNamespace(
+                    paths=SimpleNamespace(
+                        rdp_directory=r"C:\Synthetic\Rdp"
+                    )
+                ),
             ),
             mock.patch(
                 "rcm.setup.initialize_runtime_config",
                 return_value=mock.Mock(config=default_config()),
+            ),
+            mock.patch(
+                "rcm.adapters.windows.compose_native_rdp",
+                rdp_composer,
             ),
             NoLiveAccessGuard() as guard,
         ):
@@ -183,6 +292,7 @@ class IntegratedUiTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual([], guard.violations)
         self.assertEqual([], boundary.events)
+        rdp_composer.assert_called_once()
 
     def test_first_launch_persists_defaults_and_reuses_valid_config(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rcm-config-startup-") as temporary:
@@ -269,14 +379,21 @@ class IntegratedUiTests(unittest.TestCase):
         self.assertEqual(winner, observed)
         self.assertEqual(2, store.load.call_count)
 
-    def test_portable_host_plan_does_not_require_localappdata(self) -> None:
+    def test_portable_host_plan_fails_closed_without_localappdata(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):
-            plan = host_bootstrap_plan(
-                Environment({"RCM_PORTABLE": "1"}),
-                frozen=True,
-            )
-        self.assertEqual("portable", plan.identity.deployment.value)
-        self.assertEqual("data", plan.paths.config_directory.name)
+            with self.assertRaisesRegex(ValueError, "per-user LocalAppData"):
+                host_bootstrap_plan(
+                    Environment({"RCM_PORTABLE": "1"}),
+                    frozen=True,
+                )
+
+    def test_source_portable_plan_fails_closed_without_localappdata(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "per-user LocalAppData"):
+                host_bootstrap_plan(
+                    Environment({"RCM_PORTABLE": "1"}),
+                    frozen=False,
+                )
 
     def test_setup_fields_add_then_replace_only_the_local_node(self) -> None:
         original = replace(

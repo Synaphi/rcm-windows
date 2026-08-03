@@ -105,7 +105,7 @@ class PackageBootstrapTests(unittest.TestCase):
                 windows_desktop = importlib.import_module(
                     "rcm.adapters.windows_desktop"
                 )
-            self.assertEqual("2.8.3a1", package.__version__)
+            self.assertEqual("2.8.3b1", package.__version__)
             self.assertTrue(callable(module_entrypoint.main))
             self.assertTrue(callable(ui.fit_scale))
             self.assertTrue(hasattr(desktop, "DesktopLifecycle"))
@@ -246,6 +246,12 @@ class PackageBootstrapTests(unittest.TestCase):
             PureWindowsPath(r"C:\Synthetic\Application\data\logs"),
             plan.paths.log_directory,
         )
+        self.assertEqual(
+            PureWindowsPath(
+                r"C:\Synthetic\LocalAppData\RayClusterManager\rdp"
+            ),
+            plan.paths.rdp_directory,
+        )
 
     def test_resource_and_binary_paths_are_explicit_abstractions(self) -> None:
         plan = plan_bootstrap(request_for())
@@ -312,7 +318,7 @@ class PackageBootstrapTests(unittest.TestCase):
         filesystem = RecordingFilesystem()
         plan = plan_bootstrap(request_for())
         self.assertEqual([], filesystem.calls)
-        self.assertEqual(2, len(plan.directories))
+        self.assertEqual(3, len(plan.directories))
 
     def test_directory_creation_is_an_explicit_fake_filesystem_operation(
         self,
@@ -330,6 +336,12 @@ class PackageBootstrapTests(unittest.TestCase):
                 (
                     r"C:\Synthetic\LocalAppData"
                     r"\RayClusterManager-dev\logs",
+                    True,
+                    True,
+                ),
+                (
+                    r"C:\Synthetic\LocalAppData"
+                    r"\RayClusterManager-dev\rdp",
                     True,
                     True,
                 ),
