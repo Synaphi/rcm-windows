@@ -41,9 +41,12 @@ from .migrations import (
     OverlayEntry,
     SecretMaterialError,
     UnmappedField,
+    V1ImportProjection,
+    V1ImportProjectionError,
     canonical_migration_bytes,
     local_overlay_to_dict,
     plan_v1_migration,
+    project_v1_import,
 )
 from .store import (
     STORE_VERSION,
@@ -111,6 +114,8 @@ __all__ = [
     "UiSection",
     "UpdateSection",
     "UnmappedField",
+    "V1ImportProjection",
+    "V1ImportProjectionError",
     "canonical_config_bytes",
     "canonical_json_bytes",
     "canonical_migration_bytes",
@@ -122,4 +127,5 @@ __all__ = [
     "local_overlay_to_dict",
     "parse_config_bytes",
     "plan_v1_migration",
+    "project_v1_import",
 ]

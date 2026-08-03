@@ -39,6 +39,10 @@ The intended boundary is local-first:
 - privileged local changes are disabled in the unsigned one-file preview;
 - configuration and logs remain in local application data, and configuration
   records are schema-validated and integrity-checked before use;
+- 1.x import is an explicit local-file action under the production singleton;
+  the source is byte-checked before and after, raw secret material is rejected
+  without echo, credential and remote-control fields are not migrated, and a
+  generation-bound authenticated backup is required for rollback;
 - dependency inputs are pinned and hash locked; and
 - no telemetry, updater, background service, remote RCM command surface, or
   default inbound firewall rule is provided.
@@ -46,6 +50,16 @@ The intended boundary is local-first:
 Any report showing a listener reachable beyond loopback, unbounded or persistent
 elevation, unsafe path handling, secret persistence, remote command execution,
 dependency-integrity bypass, or unintended data disclosure is security relevant.
+
+The persisted import receipt, logs, and provenance must not serialize the
+migration planner's private overlay, source contents, node values, user names,
+controller lists, or local paths. The explicit on-screen confirmation may show
+the user-selected source path and eligible node routing values, but it must not
+show credential fields or raw secrets and must not persist that preview. A
+report showing source mutation, source/destination aliasing, an import while
+another production RCM owns the singleton, rollback of the wrong generation,
+or any migrated credential or retired remote authority is security relevant.
+Use only synthetic configurations when reproducing such a report.
 
 RDP launch files contain the destination and may contain the optional Windows
 user name. They are not credential stores, but they are still local operational

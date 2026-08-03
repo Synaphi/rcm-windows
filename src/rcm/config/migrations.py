@@ -10,7 +10,7 @@ instead of being silently discarded.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import ipaddress
 import math
 from typing import TypeAlias
@@ -21,6 +21,9 @@ from .schema import (
     Config,
     ConfigDecodeError,
     ConfigTooLargeError,
+    ConfigValidationError,
+    Node,
+    NodesSection,
     canonical_json_bytes,
     config_from_dict,
     config_to_dict,
@@ -67,6 +70,21 @@ class NewerLegacySchemaError(MigrationValidationError):
         self.schema_version = schema_version
         super().__init__(
             "legacy schema is newer than the supported read-only boundary"
+        )
+
+
+class V1ImportProjectionError(MigrationValidationError):
+    """A supported legacy document cannot be represented safely by 2.x."""
+
+    def __init__(self, source_path: str, reason: str) -> None:
+        self.source_path = source_path
+        self.reason = reason
+        super().__init__(f"legacy import rejected at {source_path}: {reason}")
+
+    def __repr__(self) -> str:
+        return (
+            "V1ImportProjectionError("
+            f"source_path={self.source_path!r}, reason={self.reason!r})"
         )
 
 
@@ -169,6 +187,32 @@ class MigrationPlan:
             "config=<typed>, local_overlay=<redacted>, "
             f"diff_count={len(self.diff)}, "
             f"unmapped_count={len(self.unmapped_fields)})"
+        )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class V1ImportProjection:
+    """Typed, value-redacted projection of one legacy plan onto 2.x state."""
+
+    source_schema: int
+    config: Config
+    mapped_fields: tuple[MigrationDiff, ...]
+    skipped_fields: tuple[UnmappedField, ...]
+    rejected_fields: tuple[UnmappedField, ...]
+
+    @property
+    def unmapped_fields(self) -> tuple[UnmappedField, ...]:
+        """Compatibility name for benign fields skipped by the projection."""
+
+        return self.skipped_fields
+
+    def __repr__(self) -> str:
+        return (
+            "V1ImportProjection("
+            f"source_schema={self.source_schema}, config=<typed-redacted>, "
+            f"mapped_count={len(self.mapped_fields)}, "
+            f"skipped_count={len(self.skipped_fields)}, "
+            f"rejected_count={len(self.rejected_fields)})"
         )
 
 
@@ -601,7 +645,12 @@ def _validate_nested(root: Mapping[str, object]) -> None:
             if key in this:
                 _string(this[key], f"this.{key}", maximum=64)
         if "ip" in this:
-            _ip_address(this["ip"], "this.ip", allow_empty=True)
+            _ip_address(
+                this["ip"],
+                "this.ip",
+                allow_empty=True,
+                allow_auto=True,
+            )
         if "num_cpus" in this:
             _cpu_count(this["num_cpus"], "this.num_cpus")
 
@@ -678,9 +727,12 @@ def _ip_address(
     field: str,
     *,
     allow_empty: bool,
+    allow_auto: bool = False,
 ) -> str:
     result = _string(value, field, maximum=253)
     if not result and allow_empty:
+        return result
+    if result == "auto" and allow_auto:
         return result
     try:
         ipaddress.ip_address(result)
@@ -1070,8 +1122,460 @@ def plan_v1_migration(
     )
 
 
+def _projection_entries(
+    entries: tuple[OverlayEntry, ...],
+) -> dict[str, object]:
+    return {entry.path: entry.value() for entry in entries}
+
+
+def _projection_reject(source_path: str, reason: str) -> None:
+    raise V1ImportProjectionError(source_path, reason)
+
+
+def _project_cpu_count(
+    value: object,
+    *,
+    source_schema: int,
+    source_path: str,
+) -> int:
+    if value == "auto":
+        return 0
+    if type(value) is not int:
+        _projection_reject(source_path, "cpu-invalid")
+    if value == 0 and source_schema >= 14:
+        _projection_reject(
+            source_path,
+            "driver-zero-ambiguous",
+        )
+    return value
+
+
+def _validate_projected_mode(
+    value: object,
+    *,
+    source_path: str,
+    allow_auto: bool,
+) -> None:
+    if not isinstance(value, str):
+        _projection_reject(source_path, "mode-invalid")
+    normalized = value.strip().casefold()
+    if normalized in {"controller", "rdp", "rdp-client"}:
+        _projection_reject(source_path, "retired-remote-mode")
+    allowed = {"", "ray"}
+    if allow_auto:
+        allowed.add("auto")
+    if normalized not in allowed:
+        _projection_reject(source_path, "mode-invalid")
+
+
+def _project_nodes(
+    raw_nodes: object,
+    *,
+    source_schema: int,
+) -> tuple[Node, ...]:
+    if not isinstance(raw_nodes, list):
+        _projection_reject("nodes", "nodes-not-array")
+    projected: list[Node] = []
+    identifiers: set[str] = set()
+    addresses: set[tuple[int, int]] = set()
+    head_count = 0
+    for raw_node in raw_nodes:
+        node = _mapping(raw_node)
+        name = node.get("name")
+        if not isinstance(name, str) or not name:
+            _projection_reject(
+                "nodes[].name",
+                "node-id-required",
+            )
+        folded_name = name.casefold()
+        if folded_name in identifiers:
+            _projection_reject(
+                "nodes[].name",
+                "node-id-casefold-duplicate",
+            )
+        identifiers.add(folded_name)
+
+        ip_value = node.get("ip")
+        address_value = node.get("address")
+        if ip_value is None and address_value is None:
+            _projection_reject(
+                "nodes[].address",
+                "node-address-required",
+            )
+        if ip_value is not None and address_value is not None:
+            try:
+                same_address = (
+                    ipaddress.ip_address(str(ip_value))
+                    == ipaddress.ip_address(str(address_value))
+                )
+            except ValueError:
+                same_address = False
+            if not same_address:
+                _projection_reject(
+                    "nodes[].address",
+                    "node-address-conflict",
+                )
+        address = address_value if address_value is not None else ip_value
+        if not isinstance(address, str):
+            _projection_reject(
+                "nodes[].address",
+                "node-address-invalid",
+            )
+        try:
+            parsed_address = ipaddress.ip_address(address)
+        except ValueError:
+            _projection_reject(
+                "nodes[].address",
+                "node-address-invalid",
+            )
+        address_key = (parsed_address.version, int(parsed_address))
+        if address_key in addresses:
+            _projection_reject(
+                "nodes[].address",
+                "node-address-duplicate",
+            )
+        addresses.add(address_key)
+
+        if "mode" in node:
+            _validate_projected_mode(
+                node["mode"],
+                source_path="nodes[].mode",
+                allow_auto=False,
+            )
+        role = node.get("role", "worker")
+        if role not in {"head", "observer", "worker"}:
+            _projection_reject(
+                "nodes[].role",
+                "node-role-invalid",
+            )
+        head_count += role == "head" and node.get("enabled", True)
+        if head_count > 1:
+            _projection_reject(
+                "nodes[].role",
+                "multiple-heads",
+            )
+        cpu_count = _project_cpu_count(
+            node.get("num_cpus", "auto"),
+            source_schema=source_schema,
+            source_path="nodes[].num_cpus",
+        )
+        projected.append(
+            Node(
+                node_id=name,
+                address=address,
+                role=role,
+                enabled=node.get("enabled", True),
+                cpu_count=cpu_count,
+            )
+        )
+    return tuple(projected)
+
+
+def _address_identity(value: str) -> tuple[int, int] | None:
+    try:
+        parsed = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    return parsed.version, int(parsed)
+
+
+def project_v1_import(
+    source: bytes | Mapping[str, object],
+    current: Config,
+) -> V1ImportProjection:
+    """Project safe 1.x settings onto *current* without applying effects.
+
+    The source is first processed by :func:`plan_v1_migration`.  This second
+    stage adopts only typed local configuration: supported monitoring and
+    cleanup values, a safe node inventory, local-node inference, and inert Ray
+    connection settings.  Credential, controller, trust, update, manifest,
+    remote-authority, and retired-mode data are never copied into ``Config``.
+    """
+
+    if not isinstance(current, Config):
+        raise TypeError("current must be Config")
+    config_to_dict(current)
+    plan = plan_v1_migration(source)
+    source_paths = {item.source_path for item in plan.diff}
+    mapped: list[MigrationDiff] = []
+    skipped: list[UnmappedField] = [
+        UnmappedField(item.source_path, "legacy-field-unsupported")
+        for item in plan.unmapped_fields
+        if item.source_path != "nodes[].rdp_user"
+    ]
+    rejected: list[UnmappedField] = [
+        UnmappedField(item.source_path, "rdp-user-dropped")
+        for item in plan.unmapped_fields
+        if item.source_path == "nodes[].rdp_user"
+    ]
+
+    monitoring = current.monitoring
+    if "metrics_enabled" in source_paths:
+        monitoring = replace(
+            monitoring,
+            enabled=plan.config.monitoring.enabled,
+        )
+        mapped.append(MigrationDiff(
+            "metrics_enabled", "config.monitoring.enabled", "copied"
+        ))
+    if "poll_interval" in source_paths:
+        monitoring = replace(
+            monitoring,
+            interval_ms=plan.config.monitoring.interval_ms,
+        )
+        mapped.append(MigrationDiff(
+            "poll_interval",
+            "config.monitoring.interval_ms",
+            "converted-seconds-to-milliseconds",
+        ))
+    if "dashboard_stale_grace_sec" in source_paths:
+        monitoring = replace(
+            monitoring,
+            stale_after_ms=max(
+                plan.config.monitoring.stale_after_ms,
+                monitoring.interval_ms * 2,
+            ),
+        )
+        mapped.append(MigrationDiff(
+            "dashboard_stale_grace_sec",
+            "config.monitoring.stale_after_ms",
+            "converted-seconds-to-milliseconds",
+        ))
+    elif monitoring.stale_after_ms < monitoring.interval_ms * 2:
+        _projection_reject(
+            "poll_interval",
+            "interval-stale-conflict",
+        )
+
+    cleanup = current.cleanup
+    if "process_cleanup.grace_sec" in source_paths:
+        imported_grace = plan.config.cleanup.graceful_timeout_seconds
+        force_timeout = max(
+            current.cleanup.force_timeout_seconds,
+            imported_grace,
+        )
+        cleanup = replace(
+            cleanup,
+            graceful_timeout_seconds=imported_grace,
+            force_timeout_seconds=force_timeout,
+        )
+        mapped.append(MigrationDiff(
+            "process_cleanup.grace_sec",
+            "config.cleanup.graceful_timeout_seconds",
+            "copied",
+        ))
+        if force_timeout != current.cleanup.force_timeout_seconds:
+            mapped.append(MigrationDiff(
+                "process_cleanup.grace_sec",
+                "config.cleanup.force_timeout_seconds",
+                "raised-for-timeout-invariant",
+            ))
+
+    topology = _projection_entries(plan.local_overlay.topology)
+    nodes = current.nodes
+    ray = current.ray
+
+    if "nodes" in topology:
+        node_items = _project_nodes(
+            topology["nodes"],
+            source_schema=plan.source_schema,
+        )
+        current_local = current.nodes.local_node_id.casefold()
+        local_node_id = next(
+            (
+                current.nodes.local_node_id
+                for node in node_items
+                if current_local and node.node_id.casefold() == current_local
+            ),
+            "",
+        )
+        nodes = NodesSection(node_items, local_node_id)
+        mapped.append(MigrationDiff(
+            "nodes", "config.nodes.items", "copy-converted"
+        ))
+
+    raw_this = topology.get("this")
+    if raw_this is not None:
+        this = _mapping(raw_this)
+        if "mode" in this:
+            _validate_projected_mode(
+                this["mode"],
+                source_path="this.mode",
+                allow_auto=True,
+            )
+            skipped.append(UnmappedField(
+                "this.mode", "local-mode-not-stored"
+            ))
+        if "role" in this:
+            if this["role"] not in {"auto", "head", "observer", "worker"}:
+                _projection_reject(
+                    "this.role",
+                    "local-role-invalid",
+                )
+            skipped.append(UnmappedField(
+                "this.role", "local-role-from-inventory"
+            ))
+        if "num_cpus" in this:
+            ray = replace(
+                ray,
+                cpu_count=_project_cpu_count(
+                    this["num_cpus"],
+                    source_schema=plan.source_schema,
+                    source_path="this.num_cpus",
+                ),
+            )
+            mapped.append(MigrationDiff(
+                "this.num_cpus", "config.ray.cpu_count", "copy-converted"
+            ))
+        if "ip" in this:
+            local_ip = this["ip"]
+            if local_ip in {"", "auto"}:
+                skipped.append(UnmappedField(
+                    "this.ip", "local-address-auto"
+                ))
+            elif isinstance(local_ip, str):
+                identity = _address_identity(local_ip)
+                matches = tuple(
+                    node.node_id
+                    for node in nodes.items
+                    if _address_identity(node.address) == identity
+                )
+                if len(matches) > 1:
+                    _projection_reject(
+                        "this.ip",
+                        "local-inference-ambiguous",
+                    )
+                if matches:
+                    nodes = NodesSection(nodes.items, matches[0])
+                    mapped.append(MigrationDiff(
+                        "this.ip",
+                        "config.nodes.local_node_id",
+                        "inferred-by-address",
+                    ))
+                else:
+                    skipped.append(UnmappedField(
+                        "this.ip", "local-address-unmatched"
+                    ))
+
+    if (
+        "nodes" in topology
+        and nodes.local_node_id != current.nodes.local_node_id
+        and not any(
+            item.target_path == "config.nodes.local_node_id"
+            for item in mapped
+        )
+    ):
+        mapped.append(MigrationDiff(
+            "nodes",
+            "config.nodes.local_node_id",
+            "cleared-not-in-import",
+        ))
+
+    for source_path, target_path in (
+        ("head_ip", "head_address"),
+        ("head_port", "client_port"),
+        ("dashboard_port", "dashboard_port"),
+    ):
+        if source_path not in topology:
+            continue
+        ray = replace(ray, **{target_path: topology[source_path]})
+        mapped.append(MigrationDiff(
+            source_path,
+            f"config.ray.{target_path}",
+            "copied",
+        ))
+    ray = replace(ray, enabled=False)
+
+    mapped_topology = {
+        "dashboard_port",
+        "head_ip",
+        "head_port",
+        "nodes",
+        "this",
+    }
+    for path in sorted(set(topology) - mapped_topology):
+        if path in {"cluster_manifest_path", "cluster_epoch"}:
+            rejected.append(UnmappedField(path, "remote-authority-dropped"))
+        else:
+            skipped.append(UnmappedField(path, "ray-field-unsupported"))
+    if current.ray.enabled:
+        mapped.append(MigrationDiff(
+            "projection.safety",
+            "config.ray.enabled",
+            "disabled-for-review",
+        ))
+    for entry in plan.local_overlay.per_user_ui:
+        skipped.append(UnmappedField(
+            entry.path, "legacy-ui-skipped"
+        ))
+    for entries, reason in (
+        (plan.local_overlay.trust, "trust-dropped"),
+        (
+            plan.local_overlay.controller_lists,
+            "controller-authority-dropped",
+        ),
+        (plan.local_overlay.update_paths, "update-authority-dropped"),
+        (
+            plan.local_overlay.credential_references,
+            "credential-metadata-dropped",
+        ),
+    ):
+        for entry in entries:
+            rejected.append(UnmappedField(entry.path, reason))
+    if "schema_version" in source_paths:
+        mapped.append(MigrationDiff(
+            "schema_version", "projection.source_schema", "recorded"
+        ))
+
+    projected = replace(
+        current,
+        monitoring=monitoring,
+        cleanup=cleanup,
+        nodes=nodes,
+        ray=ray,
+    )
+    try:
+        config_to_dict(projected)
+    except ConfigValidationError as exc:
+        if exc.path.startswith("nodes.items") and exc.path.endswith(".node_id"):
+            source_path = "nodes[].name"
+            reason = "node-id-invalid"
+        elif exc.path.startswith("nodes"):
+            source_path = "nodes"
+            reason = "target-config-invalid"
+        elif exc.path.startswith("monitoring"):
+            source_path = "monitoring"
+            reason = "target-config-invalid"
+        elif exc.path.startswith("cleanup"):
+            source_path = "process_cleanup"
+            reason = "target-config-invalid"
+        else:
+            source_path = "ray"
+            reason = "target-config-invalid"
+        _projection_reject(
+            source_path,
+            reason,
+        )
+    return V1ImportProjection(
+        source_schema=plan.source_schema,
+        config=projected,
+        mapped_fields=tuple(sorted(
+            set(mapped),
+            key=lambda item: (item.source_path, item.target_path, item.action),
+        )),
+        skipped_fields=tuple(sorted(
+            set(skipped),
+            key=lambda item: (item.source_path, item.reason),
+        )),
+        rejected_fields=tuple(sorted(
+            set(rejected),
+            key=lambda item: (item.source_path, item.reason),
+        )),
+    )
+
+
 def local_overlay_to_dict(overlay: LocalOverlay) -> dict[str, object]:
-    """Return the stable local overlay representation."""
+    """Return local values for in-memory projection, never for provenance."""
 
     if not isinstance(overlay, LocalOverlay):
         raise TypeError("overlay must be LocalOverlay")
@@ -1094,15 +1598,29 @@ def local_overlay_to_dict(overlay: LocalOverlay) -> dict[str, object]:
 
 
 def canonical_migration_bytes(plan: MigrationPlan) -> bytes:
-    """Serialize a plan deterministically without source bytes or secret data."""
+    """Serialize a deterministic, value-free migration summary."""
 
     if not isinstance(plan, MigrationPlan):
         raise TypeError("plan must be MigrationPlan")
+    overlay_paths = {
+        name: sorted(entry.path for entry in entries)
+        for name, entries in (
+            ("topology", plan.local_overlay.topology),
+            ("per_user_ui", plan.local_overlay.per_user_ui),
+            ("trust", plan.local_overlay.trust),
+            ("controller_lists", plan.local_overlay.controller_lists),
+            ("update_paths", plan.local_overlay.update_paths),
+            (
+                "credential_references",
+                plan.local_overlay.credential_references,
+            ),
+            ("legacy_passthrough", plan.local_overlay.legacy_passthrough),
+        )
+    }
     return canonical_json_bytes(
         {
             "source_schema": plan.source_schema,
-            "config": config_to_dict(plan.config),
-            "local_overlay": local_overlay_to_dict(plan.local_overlay),
+            "local_overlay_paths": overlay_paths,
             "diff": [
                 {
                     "source_path": item.source_path,
@@ -1135,7 +1653,10 @@ __all__ = [
     "OverlayEntry",
     "SecretMaterialError",
     "UnmappedField",
+    "V1ImportProjection",
+    "V1ImportProjectionError",
     "canonical_migration_bytes",
     "local_overlay_to_dict",
     "plan_v1_migration",
+    "project_v1_import",
 ]
