@@ -254,8 +254,8 @@ class TkDesktopHost(DesktopHost):
         self._status.pack(fill="x", pady=(0, 6))
         groups = (
             (
-                ("Start", CommandKind.START, ()),
-                ("Stop", CommandKind.STOP, ()),
+                ("Start local Ray", CommandKind.START, ()),
+                ("Stop local Ray", CommandKind.STOP, ()),
                 ("Restart", CommandKind.RESTART, ()),
                 ("Status", CommandKind.OPEN_SURFACE,
                  (("surface", Surface.STATUS.value),)),

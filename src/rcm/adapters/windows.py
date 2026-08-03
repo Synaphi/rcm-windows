@@ -345,8 +345,74 @@ def compose_native_rdp(
     return handler, runtime
 
 
+def compose_local_ray(config: Any, fallback: Callable[[Any], Any]) -> Any:
+    """Build the explicit, local-only Ray desktop command boundary."""
+
+    import os
+    from pathlib import PureWindowsPath
+
+    from ..adapters.ray_cli import (
+        LocalRayProcessRunner,
+        RayCliAdapter,
+        RayCliSettings,
+    )
+    from ..config.schema import Config
+    from ..ui.app import LocalRayCommandHandler
+
+    if not isinstance(config, Config) or not callable(fallback):
+        raise TypeError("local Ray composition dependencies are invalid")
+    if not config.ray.enabled:
+        return LocalRayCommandHandler(config, None, fallback=fallback)
+    local_id = config.nodes.local_node_id.casefold()
+    local = next(
+        (
+            item
+            for item in config.nodes.items
+            if local_id and item.node_id.casefold() == local_id
+        ),
+        None,
+    )
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    local_app_path = PureWindowsPath(local_app_data)
+    local_temp_path = local_app_path / "Temp" / "RayClusterManager" / "ray"
+    temp_path_valid = (
+        bool(local_app_data)
+        and local_app_path.is_absolute()
+        and not local_app_path.anchor.startswith("\\\\")
+        and not any(
+            part in {"", ".", ".."} or ":" in part
+            for part in local_app_path.parts[1:]
+        )
+    )
+    if (
+        local is None
+        or not config.ray.executable_path
+        or not temp_path_valid
+    ):
+        return LocalRayCommandHandler(config, None, fallback=fallback)
+    cpu_count = local.cpu_count or config.ray.cpu_count or None
+    settings = RayCliSettings(
+        executable=config.ray.executable_path,
+        local_node_id=local.node_id,
+        cluster_port=config.ray.client_port,
+        num_cpus=cpu_count,
+        temp_dir=str(local_temp_path),
+        dashboard_host=("127.0.0.1" if local.role == "head" else None),
+        dashboard_port=(
+            config.ray.dashboard_port if local.role == "head" else None
+        ),
+        start_timeout_seconds=config.ray.startup_timeout_seconds,
+    )
+    adapter = RayCliAdapter(
+        settings,
+        LocalRayProcessRunner(config.ray.executable_path),
+    )
+    return LocalRayCommandHandler(config, adapter, fallback=fallback)
+
+
 __all__ = [
     "LocalRdpFilesystem",
     "WindowsRdpLauncher",
+    "compose_local_ray",
     "compose_native_rdp",
 ]

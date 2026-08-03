@@ -35,7 +35,11 @@ from rcm.identity import (
     preview_validation_identity,
 )
 from rcm.config.migrations import SecretMaterialError
-from rcm.config.schema import canonical_json_bytes, default_config
+from rcm.config.schema import (
+    ConfigValidationError,
+    canonical_json_bytes,
+    default_config,
+)
 from rcm.config.store import ConfigConflictError, ConfigStore, StoredConfig
 from rcm.paths import (
     KnownFolders,
@@ -48,6 +52,7 @@ from rcm.setup import (
     V1ImportConflictError,
     V1ImportError,
     apply_v1_import,
+    configure_local_node,
     default_v1_config_path,
     prepare_v1_import,
     rollback_v1_import,
@@ -1065,6 +1070,55 @@ class PackageBootstrapTests(unittest.TestCase):
                 / "RayClusterManager"
                 / "config.json",
                 default_v1_config_path(),
+            )
+
+    def test_local_setup_requires_explicit_pinned_ray_configuration(self) -> None:
+        enabled = configure_local_node(
+            default_config(),
+            node_id="local-head",
+            address="192.0.2.10",
+            role="head",
+            cpu_count=4,
+            monitoring_enabled=True,
+            start_minimized=False,
+            ray_enabled=True,
+            ray_executable_path=(
+                r"C:\Synthetic\Python312\Scripts\ray.exe"
+            ),
+            ray_head_address="192.0.2.10",
+        )
+        self.assertTrue(enabled.ray.enabled)
+        self.assertEqual("local-head", enabled.nodes.local_node_id)
+        self.assertEqual(
+            r"C:\Synthetic\Python312\Scripts\ray.exe",
+            enabled.ray.executable_path,
+        )
+
+        preserved = configure_local_node(
+            enabled,
+            node_id="local-head",
+            address="192.0.2.10",
+            role="head",
+            cpu_count=4,
+            monitoring_enabled=True,
+            start_minimized=False,
+        )
+        self.assertEqual(enabled.ray, preserved.ray)
+
+        with self.assertRaisesRegex(
+            ConfigValidationError, "ray.executable_path"
+        ):
+            configure_local_node(
+                default_config(),
+                node_id="local-head",
+                address="192.0.2.10",
+                role="head",
+                cpu_count=4,
+                monitoring_enabled=True,
+                start_minimized=False,
+                ray_enabled=True,
+                ray_executable_path="",
+                ray_head_address="192.0.2.10",
             )
 
     def test_configuration_wizard_acquires_production_singleton_before_io(

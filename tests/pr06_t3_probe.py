@@ -12,6 +12,10 @@ import importlib
 import math
 import sys
 import time
+from urllib.request import urlopen
+
+
+SUPPORTED_RAY_VERSION = "2.55.1"
 
 
 def _positive_integer(value: str) -> int:
@@ -58,6 +62,14 @@ def main() -> int:
         raise RuntimeError("production Ray command boundary diverged")
 
     import ray
+
+    if ray.__version__ != SUPPORTED_RAY_VERSION:
+        raise RuntimeError("isolated lab Ray version is not the supported pin")
+
+    with urlopen("http://127.0.0.1:8265/api/version", timeout=5) as response:
+        dashboard_body = response.read(4_097)
+        if response.status != 200 or not dashboard_body or len(dashboard_body) > 4_096:
+            raise RuntimeError("isolated dashboard did not answer bounded health probe")
 
     ray.init(address="auto", logging_level="ERROR")
     try:
@@ -137,6 +149,8 @@ def main() -> int:
 
     print(
         "isolated_lab=pass "
+        f"ray_version={SUPPORTED_RAY_VERSION} "
+        "dashboard=pass "
         f"nodes={args.expected_nodes} "
         f"worker_cpus={args.expected_worker_cpus}"
     )
