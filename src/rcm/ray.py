@@ -19,6 +19,26 @@ class RayCommandKind(StrEnum):
     START = "start"
     STOP = "stop"
     STATUS = "status"
+    STATE_LIST = "state_list"
+
+
+class RayStateResource(StrEnum):
+    NODES = "nodes"
+    JOBS = "jobs"
+    TASKS = "tasks"
+    ACTORS = "actors"
+    PLACEMENT_GROUPS = "placement-groups"
+
+
+_ACTIVE_STATE_FILTERS = {
+    RayStateResource.NODES: (),
+    RayStateResource.JOBS: (
+        "status!=STOPPED", "status!=SUCCEEDED", "status!=FAILED",
+    ),
+    RayStateResource.TASKS: ("state!=FINISHED", "state!=FAILED"),
+    RayStateResource.ACTORS: ("state!=DEAD",),
+    RayStateResource.PLACEMENT_GROUPS: ("state!=REMOVED",),
+}
 
 
 def _text(
@@ -183,6 +203,33 @@ class RayStatusSpec:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RayStateListSpec:
+    executable: str
+    resource: RayStateResource
+    address: str
+    timeout_seconds: int = 10
+    limit: int = 10_000
+
+    def __post_init__(self) -> None:
+        _text(self.executable, field="executable")
+        if not isinstance(self.resource, RayStateResource):
+            raise ValueError("resource must be a RayStateResource")
+        _text(self.address, field="address", endpoint=True)
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, int)
+            or not 1 <= self.timeout_seconds <= 10
+        ):
+            raise ValueError("state timeout must be between 1 and 10 seconds")
+        if (
+            isinstance(self.limit, bool)
+            or not isinstance(self.limit, int)
+            or not 1 <= self.limit <= 10_000
+        ):
+            raise ValueError("state limit must be between 1 and 10000")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RayCommand:
     kind: RayCommandKind
     arguments: tuple[str, ...]
@@ -267,3 +314,25 @@ class RayCommandBuilder:
         if spec.address is not None:
             arguments.extend(("--address", spec.address))
         return RayCommand(RayCommandKind.STATUS, tuple(arguments))
+
+    def list_state(self, spec: RayStateListSpec) -> RayCommand:
+        if not isinstance(spec, RayStateListSpec):
+            raise TypeError("spec must be a RayStateListSpec")
+        arguments = [
+            spec.executable,
+            "list",
+            spec.resource.value,
+            "--format",
+            "json",
+        ]
+        for expression in _ACTIVE_STATE_FILTERS[spec.resource]:
+            arguments.extend(("--filter", expression))
+        arguments.extend((
+            "--address",
+            spec.address,
+            "--timeout",
+            str(spec.timeout_seconds),
+            "--limit",
+            str(spec.limit),
+        ))
+        return RayCommand(RayCommandKind.STATE_LIST, tuple(arguments))

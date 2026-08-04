@@ -21,9 +21,9 @@ from typing import Iterable
 
 ALLOWLIST = Path("policy/public-export-allowlist.txt")
 DENYLIST = Path("policy/public-export-deny-patterns.txt")
-EXPECTED_PATH_COUNT = 160
+EXPECTED_PATH_COUNT = 161
 EXPECTED_PATH_DIGEST = (
-    "47f5523577ea003ccae7811816b115ad67dded114cccc6a302b4d8e4135de2e6"
+    "e7b4af70361852261c6ab81e527366db46f95473e5d299fa8fe042a2723f058a"
 )
 EXPECTED_LICENSE_BYTES = 11_358
 EXPECTED_LICENSE_SHA256 = (

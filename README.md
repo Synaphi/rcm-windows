@@ -125,6 +125,41 @@ password, repair, listener, or cluster API. Stop Ray explicitly on every lab
 node and verify that Ray processes, temporary lab state, VM checkpoints, and
 test-only networking are removed before declaring a test complete.
 
+### Cluster-state observer boundary in current source
+
+The current source also contains a conservative, uncomposed cluster-state
+observer. It invokes the selected local Ray CLI directly, never through a
+shell, and performs at most five bounded JSON list queries for nodes, jobs,
+tasks, actors, and placement groups across at most 32 enabled nodes. It maps
+live Ray nodes to the exact configured logical name or IP and treats missing,
+duplicate, unexpected, ambiguous, stale, truncated, timed-out, malformed, or
+otherwise incomplete evidence as `UNKNOWN`. Live Ray node IDs must also be
+globally unique. Non-standard JSON constants and duplicate object keys are
+rejected, as is invalid UTF-8. The observation timestamp is a conservative
+boundary captured before the first query; the service samples its monotonic
+assessment clock after all queries, so a slow query sequence cannot make older
+evidence look fresh.
+
+Ray 2.55.1 prints `No resource in the cluster` followed by one platform line
+ending instead of JSON for an empty filtered result. RCM accepts only the exact
+exit-zero LF and CRLF forms as an empty list; missing or extra line endings,
+whitespace variants, warnings, and truncation remain `UNKNOWN`.
+
+Known active jobs, tasks, actors, or placement groups produce `BUSY` even if a
+different query is incomplete. `IDLE` is returned only when every required
+query is complete and fresh, the configured topology matches, and all active
+counts are zero. Ray entrypoint and metadata fields exist only long enough to
+classify work and are not logged, persisted, or displayed. The observer is not
+yet connected to the desktop or runtime, and it adds no Dashboard HTTP access
+or Ray SDK dependency.
+
+This result is a point-in-time observation, not a cluster-wide admission lock.
+Another process or Ray client can submit work immediately after an `IDLE`
+answer; the existing maintenance guard coordinates only callers in the same
+RCM process. A later operation that can disrupt a cluster must re-observe and
+use a separately designed admission/fencing mechanism before claiming race-
+free safety.
+
 ## Fast setup on another Windows PC
 
 1. Download `RCM-2.08.03b-windows-x64.exe` from the matching `v2.08.03b`

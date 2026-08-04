@@ -153,6 +153,7 @@ tests/test_pr07_settings.py
 tests/test_pr07_ui_state.py
 tests/test_pr07_views.py
 tests/test_pr08_baseline_retirement.py
+tests/test_pr17_cluster_state.py
 tests/test_public_source.py
 tests/test_v1_migrations.py
 tests/test_vendor_data.py
