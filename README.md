@@ -61,10 +61,10 @@ Desktop flow:
 3. Leave clipboard sharing off unless you need it. Drive, generic/USB device,
    camera, microphone, printer, COM-port, smart-card, WebAuthn, and location
    redirection are explicitly disabled.
-4. Select **Check and connect**. RCM performs only a bounded TCP check of the
-   selected address and port. If the check fails, review the address, VPN,
-   firewall, and host state; **Connect anyway** lets Windows perform the final
-   diagnosis.
+4. Select **Check and connect**. For a numeric IP address, RCM performs only a
+   bounded, cancellable TCP check of the selected address and port. RCM does
+   not start a DNS resolver for a host name; **Connect anyway** passes the
+   validated host name to Windows for its own resolution and final diagnosis.
 
 The remote PC must support RDP hosting—normally Windows Pro or higher—have
 Remote Desktop enabled, be reachable on the selected port, and permit the
@@ -75,7 +75,14 @@ rights, or send a remote command.
 RCM launches the trusted `mstsc.exe` from the Windows system directory using a
 per-launch `.rdp` file in the current user's dedicated RCM data directory. The
 file contains the destination and optional user name, never a password, and is
-removed during normal shutdown or the next startup after an interrupted run.
+created with an atomic local ownership marker. It is removed during normal
+shutdown or recovered at the next startup after an interrupted run. If the
+native client still has the file open, RCM preserves it, disables new RDP
+launches, and retries only during later lifecycle cleanup after that reader has
+released it; RCM never waits for or terminates the native client.
+Portable mode rejects a metadata directory that overlaps the shared portable
+application tree, is on a mapped drive, or traverses a reparse alias. Removing
+the owned file does not close or terminate an already-open `mstsc.exe` session.
 Because RCM and these files are unsigned, Windows or organizational policy may
 show a publisher warning or block the file. Do not weaken policy to bypass that
 decision.

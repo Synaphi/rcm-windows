@@ -29,12 +29,20 @@ The intended boundary is local-first:
 
 - health, temperature, and metrics HTTP endpoints, when composed, bind to
   `127.0.0.1` only;
-- RDP service plans are outbound launches and bounded TCP port preflight
-  initiated locally; RCM never accepts a remote password;
+- RDP service plans are outbound launches initiated locally; numeric-IP TCP
+  preflight is bounded and cancellable, while host names fail closed without a
+  product DNS worker and may be handed to Windows only through the explicit
+  **Connect anyway** action; RCM never accepts a remote password;
 - the native RDP client is resolved from the Windows system directory, launch
-  files have unpredictable application-owned names, sensitive device
-  redirection is off by default, and owned files are cleaned at shutdown and
-  the next startup;
+  files have unpredictable application-owned names plus an atomic local file
+  marker, sensitive device redirection is off by default, and only a marked,
+  regular, single-link file is recovered at shutdown or the next startup
+  without waiting for or terminating an active native-client session; this
+  marker is same-principal residue evidence, not a defense against another
+  equal-privilege process that deliberately forges attributes or changes the
+  current user's local files, including by inserting a hard link inside the
+  final validation/deletion window; a multi-link state observed by RCM is
+  preserved and fails closed;
 - Ray is inert unless the user explicitly enables it and selects one absolute
   local `ray.exe`; the desktop accepts exactly Ray 2.55.1, executes only typed
   local start/stop/status/version argv without a shell, bounds time and output,
@@ -45,6 +53,8 @@ The intended boundary is local-first:
 - privileged local changes are disabled in the unsigned one-file preview;
 - configuration and logs remain in local application data, and configuration
   records are schema-validated and integrity-checked before use;
+- portable RDP metadata must remain outside the portable application tree on a
+  local, non-reparse per-user directory;
 - 1.x import is an explicit local-file action under the production singleton;
   the source is byte-checked before and after, raw secret material is rejected
   without echo, credential and remote-control fields are not migrated, and a

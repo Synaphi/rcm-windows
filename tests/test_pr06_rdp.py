@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import tempfile
 import traceback
 import unittest
+from unittest import mock
 
 from rcm.core import CapabilityState, RejectedError, UnavailableError
 from rcm.ports import CredentialReference, CredentialTarget
@@ -55,6 +56,10 @@ class MemoryFilesystem:
             del self.files[path]
         elif not missing_ok:
             raise FileNotFoundError(path)
+
+    def recover_stale(self, path: str, *, missing_ok: bool = False) -> None:
+        self.events.append(("recover_stale", path))
+        self.unlink(path, missing_ok=missing_ok)
 
     def listdir(self, path: str) -> tuple[str, ...]:
         prefix = path.rstrip("\\") + "\\"
@@ -456,6 +461,243 @@ class RdpServiceTests(unittest.TestCase):
             filesystem.files[r"C:\Synthetic\unrelated.rdp"],
         )
 
+    def test_launch_collision_never_deletes_a_preexisting_owned_name(
+        self,
+    ) -> None:
+        class ExclusiveMemoryFilesystem(MemoryFilesystem):
+            def write_bytes(self, path: str, data: bytes) -> None:
+                if path in self.files:
+                    raise FileExistsError(path)
+                super().write_bytes(path, data)
+
+        filesystem = ExclusiveMemoryFilesystem()
+        artifact = rf"C:\Synthetic\Rdp\rcm_rdp_{_TOKEN}.rdp"
+        filesystem.files[artifact] = b"preexisting"
+        launcher = WindowsRdpLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=lambda *_args, **_kwargs: SimpleNamespace(
+                pid=41_012
+            ),
+        )
+        service = RdpService(
+            credentials=SyntheticCredentialStore(None),
+            launcher=launcher,
+            token_factory=lambda: _TOKEN,
+        )
+
+        with self.assertRaisesRegex(
+            UnavailableError,
+            "native RDP client could not be launched",
+        ):
+            service.launch(RdpRequest("worker.example", ""))
+
+        self.assertEqual(b"preexisting", filesystem.files[artifact])
+        self.assertNotIn(("unlink", artifact), filesystem.events)
+        self.assertTrue(launcher.join(0))
+
+    def test_mstsc_resolution_failure_never_touches_the_planned_path(
+        self,
+    ) -> None:
+        class MissingClientLauncher(WindowsRdpLauncher):
+            def _mstsc_path(self) -> str:
+                raise OSError("synthetic native client failure")
+
+        filesystem = MemoryFilesystem()
+        artifact = rf"C:\Synthetic\Rdp\rcm_rdp_{_TOKEN}.rdp"
+        filesystem.files[artifact] = b"preexisting"
+        launcher = MissingClientLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=lambda *_args, **_kwargs: SimpleNamespace(
+                pid=41_013
+            ),
+        )
+        service = RdpService(
+            credentials=SyntheticCredentialStore(None),
+            launcher=launcher,
+            token_factory=lambda: _TOKEN,
+        )
+
+        with self.assertRaisesRegex(
+            UnavailableError,
+            "native RDP client could not be launched",
+        ):
+            service.launch(RdpRequest("worker.example", ""))
+
+        self.assertEqual(b"preexisting", filesystem.files[artifact])
+        self.assertEqual([], filesystem.events)
+
+    def test_process_factory_file_exists_error_removes_new_artifact(self) -> None:
+        filesystem = MemoryFilesystem()
+        artifact = rf"C:\Synthetic\Rdp\rcm_rdp_{_TOKEN}.rdp"
+        launcher = WindowsRdpLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=mock.Mock(side_effect=FileExistsError("synthetic")),
+        )
+        service = RdpService(
+            credentials=SyntheticCredentialStore(None),
+            launcher=launcher,
+            token_factory=lambda: _TOKEN,
+        )
+
+        with self.assertRaises(UnavailableError):
+            service.launch(RdpRequest("worker.example", ""))
+
+        self.assertNotIn(artifact, filesystem.files)
+        self.assertIn(("unlink", artifact), filesystem.events)
+        self.assertTrue(launcher.join(0))
+
+    def test_partial_write_failure_removes_only_the_new_artifact(self) -> None:
+        class PartialFailureFilesystem(MemoryFilesystem):
+            def write_bytes(self, path: str, data: bytes) -> None:
+                super().write_bytes(path, data)
+                super().unlink(path, missing_ok=False)
+                raise OSError("synthetic partial write")
+
+        filesystem = PartialFailureFilesystem()
+        artifact = rf"C:\Synthetic\Rdp\rcm_rdp_{_TOKEN}.rdp"
+        launcher = WindowsRdpLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=lambda *_args, **_kwargs: SimpleNamespace(
+                pid=41_014
+            ),
+        )
+        service = RdpService(
+            credentials=SyntheticCredentialStore(None),
+            launcher=launcher,
+            token_factory=lambda: _TOKEN,
+        )
+
+        with self.assertRaises(UnavailableError):
+            service.launch(RdpRequest("worker.example", ""))
+
+        self.assertNotIn(artifact, filesystem.files)
+        self.assertEqual(
+            [("write", artifact), ("unlink", artifact)],
+            filesystem.events,
+        )
+        self.assertTrue(launcher.join(0))
+
+    def test_generic_precreate_failure_never_deletes_an_existing_path(
+        self,
+    ) -> None:
+        class PrecreateFailureFilesystem(MemoryFilesystem):
+            def write_bytes(self, path: str, data: bytes) -> None:
+                del path, data
+                raise PermissionError("synthetic pre-create failure")
+
+        filesystem = PrecreateFailureFilesystem()
+        artifact = rf"C:\Synthetic\Rdp\rcm_rdp_{_TOKEN}.rdp"
+        filesystem.files[artifact] = b"preexisting"
+        launcher = WindowsRdpLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=lambda *_args, **_kwargs: SimpleNamespace(pid=1),
+        )
+        service = RdpService(
+            credentials=SyntheticCredentialStore(None),
+            launcher=launcher,
+            token_factory=lambda: _TOKEN,
+        )
+
+        with self.assertRaises(UnavailableError):
+            service.launch(RdpRequest("worker.example", ""))
+
+        self.assertEqual(b"preexisting", filesystem.files[artifact])
+        self.assertNotIn(("unlink", artifact), filesystem.events)
+
+    def test_local_filesystem_removes_a_created_partial_write(self) -> None:
+        if os.name != "nt":
+            self.skipTest("requires the Windows handle-backed write path")
+        from rcm.adapters import windows as windows_adapter
+
+        artifact = rf"C:\Synthetic\Rdp\rcm_rdp_{_TOKEN}.rdp"
+        directory_lease = mock.Mock()
+        details = windows_adapter._WindowsLocalFileDetails(
+            windows_adapter._OWNED_RDP_FILE_ATTRIBUTES,
+            0,
+            0,
+            7,
+            1,
+            8,
+        )
+
+        with (
+            mock.patch("rcm.setup._assert_local_metadata_root"),
+            mock.patch.object(
+                LocalRdpFilesystem,
+                "_acquire_directory",
+                return_value=directory_lease,
+            ),
+            mock.patch(
+                "rcm.adapters.windows._open_windows_local_file",
+                return_value=41_016,
+            ),
+            mock.patch(
+                "rcm.adapters.windows._windows_local_file_details",
+                return_value=details,
+            ),
+            mock.patch(
+                "rcm.adapters.windows._write_windows_local_file",
+                side_effect=OSError("synthetic partial write"),
+            ) as write_file,
+            mock.patch(
+                "rcm.adapters.windows._mark_windows_local_file_for_delete"
+            ) as mark_delete,
+            mock.patch(
+                "rcm.adapters.windows._close_windows_local_file"
+            ) as close,
+        ):
+            filesystem = LocalRdpFilesystem(r"C:\Synthetic\Rdp")
+            with self.assertRaises(OSError):
+                filesystem.write_bytes(artifact, b"synthetic")
+
+        write_file.assert_called_once_with(41_016, b"synthetic")
+        mark_delete.assert_called_once_with(41_016)
+        close.assert_called_once_with(41_016)
+        directory_lease.close.assert_called_once_with()
+
+    def test_runtime_cleanup_never_terminates_the_native_client(self) -> None:
+        filesystem = MemoryFilesystem()
+        process = SimpleNamespace(
+            pid=41_015,
+            terminate=mock.Mock(side_effect=AssertionError("must not terminate")),
+            kill=mock.Mock(side_effect=AssertionError("must not kill")),
+            wait=mock.Mock(side_effect=AssertionError("must not wait")),
+        )
+        launcher = WindowsRdpLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=lambda *_args, **_kwargs: process,
+        )
+        service = RdpService(
+            credentials=SyntheticCredentialStore(None),
+            launcher=launcher,
+            token_factory=lambda: _TOKEN,
+        )
+        runtime = RuntimeCoordinator((RuntimeUnit("rdp-artifacts", launcher),))
+        runtime.start()
+
+        receipt = service.launch(RdpRequest("worker.example", ""))
+        stopped = runtime.stop()
+
+        self.assertEqual(41_015, receipt.process_id)
+        self.assertIs(RuntimeState.STOPPED, stopped.state)
+        self.assertEqual({}, filesystem.files)
+        self.assertTrue(launcher.join(0))
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+        process.wait.assert_not_called()
+
     def test_cleanup_all_removes_every_launcher_owned_artifact(self) -> None:
         filesystem = MemoryFilesystem()
         launcher = WindowsRdpLauncher(
@@ -490,6 +732,48 @@ class RdpServiceTests(unittest.TestCase):
 
         self.assertNotIn(owned, filesystem.files)
         self.assertEqual(b"keep", filesystem.files[foreign])
+        self.assertIn(("recover_stale", owned), filesystem.events)
+
+    def test_stale_recovery_retry_uses_the_prior_process_boundary(self) -> None:
+        class HeldReaderFilesystem(MemoryFilesystem):
+            sharing_failure = True
+
+            def recover_stale(
+                self,
+                path: str,
+                *,
+                missing_ok: bool = False,
+            ) -> None:
+                self.events.append(("recover_attempt", path))
+                if self.sharing_failure:
+                    raise PermissionError("synthetic sharing violation")
+                super().recover_stale(path, missing_ok=missing_ok)
+
+        filesystem = HeldReaderFilesystem()
+        owned = rf"C:\Synthetic\Rdp\rcm_rdp_{'b' * 32}.rdp"
+        filesystem.files[owned] = b"stale"
+        launcher = WindowsRdpLauncher(
+            filesystem=filesystem,
+            directory=r"C:\Synthetic\Rdp",
+            executable=_MSTSC,
+            process_factory=mock.Mock(
+                side_effect=AssertionError("must not start a process")
+            ),
+        )
+
+        launcher.start(SimpleNamespace(raise_if_cancelled=lambda: None))
+
+        self.assertFalse(launcher.join(0))
+        self.assertEqual(b"stale", filesystem.files[owned])
+        filesystem.sharing_failure = False
+        launcher.cleanup_all()
+
+        self.assertNotIn(owned, filesystem.files)
+        self.assertTrue(launcher.join(0))
+        self.assertEqual(
+            [("recover_attempt", owned), ("recover_attempt", owned)],
+            [event for event in filesystem.events if event[0] == "recover_attempt"],
+        )
 
     def test_startup_unlink_failure_is_tracked_for_shutdown_retry(self) -> None:
         class CleanupFailureFilesystem(MemoryFilesystem):
@@ -596,7 +880,9 @@ class RdpServiceTests(unittest.TestCase):
 
             self.assertEqual(b"synthetic", observed)
             self.assertEqual((name,), filesystem.listdir(str(directory)))
-            self.assertEqual(9, filesystem.stat(str(artifact)).size)
+            file_stat = filesystem.stat(str(artifact))
+            self.assertEqual(9, file_stat.size)
+            self.assertEqual(artifact.stat().st_mtime_ns, file_stat.modified_ns)
             with self.assertRaises(ValueError):
                 filesystem.write_bytes(
                     str(directory.parent / name),
@@ -604,6 +890,421 @@ class RdpServiceTests(unittest.TestCase):
                 )
             filesystem.unlink(str(artifact))
             self.assertFalse(artifact.exists())
+
+    def test_local_rdp_stale_recovery_accepts_partial_and_full_marked_files(
+        self,
+    ) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows marked RDP recovery contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-stale-marked-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+            payloads = (b"\xff", b"\xff\xfe" + b"synthetic-rdp" * 32)
+
+            for index, payload in enumerate(payloads):
+                with self.subTest(index=index):
+                    artifact = directory / (
+                        f"rcm_rdp_{index:032x}.rdp"
+                    )
+                    windows_adapter._write_exclusive_local_file(
+                        str(artifact), payload
+                    )
+                    attributes = os.stat(artifact).st_file_attributes
+                    self.assertEqual(
+                        windows_adapter._OWNED_RDP_FILE_ATTRIBUTES,
+                        attributes
+                        & windows_adapter._OWNED_RDP_FILE_ATTRIBUTES,
+                    )
+
+                    filesystem.recover_stale(str(artifact))
+
+                    self.assertFalse(artifact.exists())
+
+    def test_owned_rdp_marker_allows_inherited_local_storage_attributes(
+        self,
+    ) -> None:
+        from rcm.adapters import windows as windows_adapter
+
+        def details(attributes: int) -> object:
+            return windows_adapter._WindowsLocalFileDetails(
+                attributes,
+                128,
+                0,
+                1,
+                1,
+                1,
+            )
+
+        marker = windows_adapter._OWNED_RDP_FILE_ATTRIBUTES
+        for inherited in (0x200, 0x800, 0x2000, 0x4000, 0x8000, 0x20000):
+            with self.subTest(inherited=inherited):
+                self.assertTrue(
+                    windows_adapter._owned_rdp_file_details_are_valid(
+                        details(marker | inherited)
+                    )
+                )
+        for forbidden in (0x10, 0x40, 0x400):
+            with self.subTest(forbidden=forbidden):
+                self.assertFalse(
+                    windows_adapter._owned_rdp_file_details_are_valid(
+                        details(marker | forbidden)
+                    )
+                )
+
+    def test_local_rdp_stale_recovery_preserves_ambiguous_files(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows marked RDP recovery contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-stale-ambiguous-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+            unmarked = directory / f"rcm_rdp_{'3' * 32}.rdp"
+            partial_marker = directory / f"rcm_rdp_{'4' * 32}.rdp"
+            oversized = directory / f"rcm_rdp_{'5' * 32}.rdp"
+            rejected = directory / f"rcm_rdp_{'9' * 32}.rdp"
+            unmarked.write_bytes(b"foreign")
+            handle = windows_adapter._open_windows_local_file(
+                str(partial_marker),
+                access=0x40000000 | 0x00010000,
+                creation=1,
+                file_attributes=0x00000002 | 0x00000100,
+            )
+            windows_adapter._close_windows_local_file(handle)
+            oversized_handle = windows_adapter._open_windows_local_file(
+                str(oversized),
+                access=0x40000000 | 0x00010000,
+                creation=1,
+                file_attributes=(
+                    windows_adapter._OWNED_RDP_FILE_ATTRIBUTES
+                ),
+            )
+            try:
+                windows_adapter._write_windows_local_file(
+                    oversized_handle, b"x" * 65_537
+                )
+            finally:
+                windows_adapter._close_windows_local_file(oversized_handle)
+            with self.assertRaisesRegex(ValueError, "owned-file limit"):
+                windows_adapter._write_exclusive_local_file(
+                    str(rejected), b"x" * 65_537
+                )
+            self.assertFalse(rejected.exists())
+
+            for artifact in (unmarked, partial_marker, oversized):
+                with self.subTest(artifact=artifact.name):
+                    with self.assertRaisesRegex(
+                        OSError,
+                        "ownership marker is unavailable",
+                    ):
+                        filesystem.recover_stale(str(artifact))
+                    self.assertTrue(artifact.exists())
+
+    def test_local_rdp_stale_recovery_preserves_multilink(
+        self,
+    ) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows marked RDP recovery contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-stale-alias-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+            multilink = directory / f"rcm_rdp_{'6' * 32}.rdp"
+            alias = directory / "foreign-hard-link.rdp"
+            windows_adapter._write_exclusive_local_file(
+                str(multilink), b"synthetic"
+            )
+            try:
+                os.link(multilink, alias)
+            except OSError as error:
+                multilink.unlink(missing_ok=True)
+                self.skipTest(f"Windows hard links unavailable: {error}")
+
+            with self.assertRaisesRegex(OSError, "ownership marker"):
+                filesystem.recover_stale(str(multilink))
+            self.assertTrue(multilink.exists())
+            self.assertTrue(alias.exists())
+
+    def test_local_rdp_stale_recovery_preserves_reparse(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows reparse recovery contract")
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-stale-reparse-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+
+            target = directory / "foreign-target.rdp"
+            reparse = directory / f"rcm_rdp_{'7' * 32}.rdp"
+            target.write_bytes(b"foreign")
+            try:
+                os.symlink(target, reparse)
+            except OSError as error:
+                self.skipTest(f"Windows symlinks unavailable: {error}")
+
+            with self.assertRaisesRegex(OSError, "ownership marker"):
+                filesystem.recover_stale(str(reparse))
+            self.assertTrue(reparse.is_symlink())
+            self.assertEqual(b"foreign", target.read_bytes())
+
+    def test_local_rdp_active_cleanup_preserves_multilink(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows active-link ownership contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-active-link-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            artifact = directory / f"rcm_rdp_{'a' * 32}.rdp"
+            alias = directory / "foreign-active-link.rdp"
+            filesystem = LocalRdpFilesystem(str(directory))
+            filesystem.write_bytes(str(artifact), b"synthetic-rdp")
+            os.link(artifact, alias)
+
+            with self.assertRaisesRegex(OSError, "ownership changed"):
+                filesystem.unlink(str(artifact))
+            self.assertTrue(artifact.exists())
+            self.assertTrue(alias.exists())
+            self.assertEqual(b"synthetic-rdp", alias.read_bytes())
+            state = filesystem._owned_artifacts[str(artifact).casefold()]
+            windows_adapter._close_windows_local_file(state.handle)
+            state.handle = None
+            alias.unlink()
+            filesystem.unlink(str(artifact))
+
+    def test_local_rdp_guard_rejects_multilink_handoff(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows handoff-link ownership contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-handoff-link-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            artifact = directory / f"rcm_rdp_{'d' * 32}.rdp"
+            alias = directory / "foreign-handoff-link.rdp"
+            filesystem = LocalRdpFilesystem(str(directory))
+            original_write = windows_adapter._write_exclusive_local_file
+
+            def link_after_writer_close(path: str, data: bytes) -> str:
+                identity = original_write(path, data)
+                os.link(path, alias)
+                return identity
+
+            with (
+                mock.patch(
+                    "rcm.adapters.windows._write_exclusive_local_file",
+                    side_effect=link_after_writer_close,
+                ),
+                self.assertRaisesRegex(
+                    OSError,
+                    "guard could not be established",
+                ),
+            ):
+                filesystem.write_bytes(str(artifact), b"synthetic-rdp")
+
+            self.assertTrue(artifact.exists())
+            self.assertTrue(alias.exists())
+            self.assertEqual(b"synthetic-rdp", alias.read_bytes())
+            alias.unlink()
+            artifact.unlink()
+
+    def test_local_rdp_held_reader_is_recovered_at_shutdown(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows handle-sharing recovery contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-stale-held-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            artifact = directory / f"rcm_rdp_{'8' * 32}.rdp"
+            windows_adapter._write_exclusive_local_file(
+                str(artifact), b"synthetic"
+            )
+            reader = windows_adapter._open_windows_local_file(
+                str(artifact),
+                access=0x80000000,
+                creation=3,
+            )
+            process_factory = mock.Mock(
+                side_effect=AssertionError("must not start a process")
+            )
+            launcher = WindowsRdpLauncher(
+                filesystem=LocalRdpFilesystem(str(directory)),
+                directory=str(directory),
+                executable=_MSTSC,
+                process_factory=process_factory,
+            )
+            try:
+                launcher.start(
+                    SimpleNamespace(raise_if_cancelled=lambda: None)
+                )
+                self.assertFalse(launcher.join(0))
+                self.assertTrue(artifact.exists())
+            finally:
+                windows_adapter._close_windows_local_file(reader)
+
+            launcher.cleanup_all()
+
+            self.assertFalse(artifact.exists())
+            self.assertTrue(launcher.join(0))
+            process_factory.assert_not_called()
+
+    def test_local_rdp_guard_preserves_launch_bytes_until_cleanup(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows handle identity contract")
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-identity-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+            consumed: list[bytes] = []
+
+            def consume_while_attacked(
+                argv: tuple[str, ...],
+                **_kwargs: object,
+            ) -> SimpleNamespace:
+                artifact = Path(argv[1])
+                with self.assertRaises(OSError):
+                    artifact.unlink()
+                with self.assertRaises(OSError):
+                    artifact.write_bytes(b"replacement")
+                consumed.append(artifact.read_bytes())
+                return SimpleNamespace(pid=41_017)
+
+            launcher = WindowsRdpLauncher(
+                filesystem=filesystem,
+                directory=str(directory),
+                executable=_MSTSC,
+                process_factory=consume_while_attacked,
+            )
+            service = RdpService(
+                credentials=SyntheticCredentialStore(None),
+                launcher=launcher,
+                token_factory=lambda: _TOKEN,
+            )
+            receipt = service.launch(RdpRequest("worker.example", ""))
+            artifact = Path(receipt.artifact_path)
+
+            self.assertEqual(1, len(consumed))
+            self.assertIn(
+                "full address:s:worker.example:3389",
+                consumed[0].decode("utf-16").splitlines(),
+            )
+            with self.assertRaises(OSError):
+                artifact.unlink()
+            service.cleanup(receipt)
+            self.assertTrue(launcher.join(0))
+            self.assertFalse(artifact.exists())
+
+    def test_local_rdp_guard_cleans_up_after_process_launch_failure(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows handle identity contract")
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-guard-fail-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+            launcher = WindowsRdpLauncher(
+                filesystem=filesystem,
+                directory=str(directory),
+                executable=_MSTSC,
+                process_factory=mock.Mock(
+                    side_effect=OSError("synthetic launch failure")
+                ),
+            )
+            service = RdpService(
+                credentials=SyntheticCredentialStore(None),
+                launcher=launcher,
+                token_factory=lambda: _TOKEN,
+            )
+
+            with self.assertRaises(UnavailableError):
+                service.launch(RdpRequest("worker.example", ""))
+
+            self.assertEqual((), filesystem.listdir(str(directory)))
+            self.assertTrue(launcher.join(0))
+
+    def test_local_rdp_guard_rejects_same_identity_content_race(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows handle identity contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-content-race-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            filesystem = LocalRdpFilesystem(str(directory))
+            artifact = directory / f"rcm_rdp_{'c' * 32}.rdp"
+            original_write = windows_adapter._write_exclusive_local_file
+
+            def mutate_after_writer_close(path: str, data: bytes) -> str:
+                identity = original_write(path, data)
+                mutation_handle = windows_adapter._open_windows_local_file(
+                    path,
+                    access=0x40000000,
+                    creation=3,
+                )
+                try:
+                    windows_adapter._write_windows_local_file(
+                        mutation_handle, b"replacement-rdp-bytes"
+                    )
+                finally:
+                    windows_adapter._close_windows_local_file(mutation_handle)
+                return identity
+
+            with (
+                mock.patch(
+                    "rcm.adapters.windows._write_exclusive_local_file",
+                    side_effect=mutate_after_writer_close,
+                ),
+                self.assertRaisesRegex(OSError, "contents changed"),
+            ):
+                filesystem.write_bytes(str(artifact), b"original-rdp-bytes")
+
+            self.assertFalse(artifact.exists())
+            self.assertEqual((), filesystem.listdir(str(directory)))
+
+    def test_local_rdp_write_locks_directory_and_file_against_rename(
+        self,
+    ) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows handle-sharing contract")
+        from rcm.adapters import windows as windows_adapter
+
+        with tempfile.TemporaryDirectory(prefix="rcm-rdp-locks-") as temporary:
+            directory = Path(temporary, "rdp")
+            directory.mkdir()
+            artifact = directory / f"rcm_rdp_{'b' * 32}.rdp"
+            renamed_directory = directory.with_name("redirected")
+            renamed_artifact = artifact.with_name("redirected.rdp")
+            original_write = windows_adapter._write_windows_local_file
+            observations: list[str] = []
+
+            def write_while_attacked(handle: int, data: bytes) -> None:
+                with self.assertRaises(OSError):
+                    directory.rename(renamed_directory)
+                observations.append("directory-locked")
+                with self.assertRaises(OSError):
+                    artifact.rename(renamed_artifact)
+                observations.append("file-locked")
+                original_write(handle, data)
+
+            filesystem = LocalRdpFilesystem(str(directory))
+            with mock.patch(
+                "rcm.adapters.windows._write_windows_local_file",
+                side_effect=write_while_attacked,
+            ):
+                filesystem.write_bytes(str(artifact), b"synthetic")
+
+            self.assertEqual(
+                ["directory-locked", "file-locked"],
+                observations,
+            )
+            self.assertEqual(b"synthetic", artifact.read_bytes())
+            filesystem.unlink(str(artifact))
 
     def test_windows_capability_resolves_existing_system_mstsc(self) -> None:
         if os.name != "nt":

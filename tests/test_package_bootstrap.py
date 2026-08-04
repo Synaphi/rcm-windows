@@ -45,6 +45,7 @@ from rcm.paths import (
     KnownFolders,
     absolute_local_path,
     join_relative,
+    plan_runtime_paths,
     safe_relative_path,
 )
 from rcm.setup import (
@@ -311,6 +312,84 @@ class PackageBootstrapTests(unittest.TestCase):
             ),
             plan.paths.rdp_directory,
         )
+
+    def test_portable_rdp_metadata_rejects_both_overlap_directions(self) -> None:
+        identity = identity_for(DeploymentKind.PORTABLE)
+        cases = (
+            (
+                PureWindowsPath(r"C:\Synthetic\Shared\Portable\PerUser"),
+                PureWindowsPath(r"C:\Synthetic\Shared\Portable"),
+            ),
+            (
+                PureWindowsPath(r"C:\Synthetic\Shared"),
+                PureWindowsPath(
+                    r"C:\Synthetic\Shared\RayClusterManager\rdp\App"
+                ),
+            ),
+        )
+        for local_app_data, application_root in cases:
+            with self.subTest(
+                local_app_data=local_app_data,
+                application_root=application_root,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "separate per-user LocalAppData",
+                ):
+                    plan_runtime_paths(
+                        identity=identity,
+                        known_folders=KnownFolders(
+                            local_app_data=local_app_data
+                        ),
+                        application_root=application_root,
+                        resource_root=application_root / "resources",
+                        current_binary=application_root / "rcm.exe",
+                    )
+
+    def test_portable_rdp_metadata_allows_a_safe_local_sibling(self) -> None:
+        plan = plan_runtime_paths(
+            identity=identity_for(DeploymentKind.PORTABLE),
+            known_folders=KnownFolders(
+                local_app_data=PureWindowsPath(r"C:\Synthetic\LocalAppData")
+            ),
+            application_root=PureWindowsPath(
+                r"C:\Synthetic\LocalAppData\Programs\RCM"
+            ),
+            resource_root=PureWindowsPath(
+                r"C:\Synthetic\LocalAppData\Programs\RCM\resources"
+            ),
+            current_binary=PureWindowsPath(
+                r"C:\Synthetic\LocalAppData\Programs\RCM\rcm.exe"
+            ),
+        )
+
+        self.assertEqual(
+            PureWindowsPath(
+                r"C:\Synthetic\LocalAppData\RayClusterManager\rdp"
+            ),
+            plan.rdp_directory,
+        )
+
+    def test_portable_rdp_metadata_rejects_binary_parent_root(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "separate per-user LocalAppData",
+        ):
+            plan_runtime_paths(
+                identity=identity_for(DeploymentKind.PORTABLE),
+                known_folders=KnownFolders(
+                    local_app_data=PureWindowsPath(
+                        r"C:\Synthetic\Python312"
+                    )
+                ),
+                application_root=PureWindowsPath(r"C:\Synthetic\Source\RCM"),
+                resource_root=PureWindowsPath(
+                    r"C:\Synthetic\Source\RCM\resources"
+                ),
+                current_binary=PureWindowsPath(
+                    r"C:\Synthetic\Python312\python.exe"
+                ),
+            )
 
     def test_resource_and_binary_paths_are_explicit_abstractions(self) -> None:
         plan = plan_bootstrap(request_for())

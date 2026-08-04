@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 import hashlib
 import os
 from pathlib import Path
 import stat
+from typing import Iterator
 
 from .bootstrap import (
     BootstrapPlan,
@@ -178,6 +180,211 @@ def _windows_drive_type(path: Path) -> int:
     get_drive_type.argtypes = (wintypes.LPCWSTR,)
     get_drive_type.restype = wintypes.UINT
     return int(get_drive_type(drive + "\\"))
+
+
+def _metadata_host_is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _metadata_directory_chain(path: Path) -> tuple[Path, ...]:
+    path = Path(path)
+    text = str(path)
+    folded = text.replace("/", "\\").casefold()
+    if (
+        not path.is_absolute()
+        or path.anchor.startswith("\\\\")
+        or folded.startswith(("\\\\?\\", "\\\\.\\", "\\??\\"))
+        or any(part in {"", ".", ".."} for part in path.parts[1:])
+        or any(":" in part for part in path.parts[1:])
+    ):
+        raise RuntimeError("local application metadata is unavailable")
+    current = Path(path.anchor)
+    chain = [current]
+    for part in path.parts[1:]:
+        current /= part
+        chain.append(current)
+    return tuple(chain)
+
+
+def _open_windows_directory_no_reparse(path: Path) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class ByHandleFileInformation(ctypes.Structure):
+        _fields_ = (
+            ("file_attributes", wintypes.DWORD),
+            ("creation_time_low", wintypes.DWORD),
+            ("creation_time_high", wintypes.DWORD),
+            ("access_time_low", wintypes.DWORD),
+            ("access_time_high", wintypes.DWORD),
+            ("write_time_low", wintypes.DWORD),
+            ("write_time_high", wintypes.DWORD),
+            ("volume_serial_number", wintypes.DWORD),
+            ("file_size_high", wintypes.DWORD),
+            ("file_size_low", wintypes.DWORD),
+            ("number_of_links", wintypes.DWORD),
+            ("file_index_high", wintypes.DWORD),
+            ("file_index_low", wintypes.DWORD),
+        )
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    handle = create_file(
+        str(path),
+        0x0080,  # FILE_READ_ATTRIBUTES
+        0x00000001,  # share read only; deny concurrent write/delete mutation
+        None,
+        3,  # OPEN_EXISTING
+        0x02000000 | 0x00200000,  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+        None,
+    )
+    invalid = ctypes.c_void_p(-1).value
+    if handle == invalid:
+        raise ctypes.WinError(ctypes.get_last_error())
+    get_information = kernel32.GetFileInformationByHandle
+    get_information.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(ByHandleFileInformation),
+    )
+    get_information.restype = wintypes.BOOL
+    information = ByHandleFileInformation()
+    if not get_information(handle, ctypes.byref(information)):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(handle)
+        raise ctypes.WinError(error)
+    if (
+        not information.file_attributes & 0x10  # FILE_ATTRIBUTE_DIRECTORY
+        or information.file_attributes & 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        kernel32.CloseHandle(handle)
+        raise RuntimeError("local application metadata is unavailable")
+    return int(handle)
+
+
+def _close_windows_handle(handle: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    close_handle = ctypes.WinDLL(
+        "kernel32",
+        use_last_error=True,
+    ).CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+    close_handle(handle)
+
+
+class _LocalMetadataDirectoryLease:
+    def __init__(self, handles: tuple[int, ...]) -> None:
+        self._handles = handles
+
+    def close(self) -> None:
+        handles, self._handles = self._handles, ()
+        for handle in reversed(handles):
+            _close_windows_handle(handle)
+
+    def __enter__(self) -> _LocalMetadataDirectoryLease:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+def _acquire_local_metadata_directory(
+    path: Path,
+) -> _LocalMetadataDirectoryLease:
+    """Acquire a mutation-denying lease over every real path component."""
+
+    path = Path(path)
+    if not _metadata_host_is_windows():
+        _assert_local_metadata_root(path)
+        return _LocalMetadataDirectoryLease(())
+    if _windows_drive_type(path) != 3:
+        raise RuntimeError("local application metadata is unavailable")
+    handles: list[int] = []
+    try:
+        for current in _metadata_directory_chain(path):
+            handles.append(_open_windows_directory_no_reparse(current))
+    except RuntimeError:
+        for handle in reversed(handles):
+            _close_windows_handle(handle)
+        raise
+    except OSError:
+        for handle in reversed(handles):
+            _close_windows_handle(handle)
+        raise RuntimeError("local application metadata is unavailable") from None
+    return _LocalMetadataDirectoryLease(tuple(handles))
+
+
+@contextmanager
+def _locked_local_metadata_directory(path: Path) -> Iterator[None]:
+    """Hold every real directory component against replacement on Windows."""
+
+    lease = _acquire_local_metadata_directory(path)
+    try:
+        yield
+    finally:
+        lease.close()
+
+
+def _assert_local_metadata_root(path: Path) -> None:
+    """Fail closed unless per-user metadata stays on a local real directory."""
+
+    path = Path(path)
+    if not _metadata_host_is_windows():
+        return
+    if _windows_drive_type(path) != 3:
+        raise RuntimeError("local application metadata is unavailable")
+    try:
+        current = path
+        while True:
+            details = os.stat(current, follow_symlinks=False)
+            if stat.S_ISLNK(details.st_mode) or _has_reparse_attribute(details):
+                raise RuntimeError("local application metadata is unavailable")
+            if current.parent == current:
+                break
+            current = current.parent
+    except RuntimeError:
+        raise
+    except OSError:
+        raise RuntimeError("local application metadata is unavailable") from None
+    if not stat.S_ISDIR(os.stat(path, follow_symlinks=False).st_mode):
+        raise RuntimeError("local application metadata is unavailable")
+
+
+def _ensure_local_metadata_directory(path: Path, trusted_root: Path) -> None:
+    """Create one metadata path while every accepted parent remains locked."""
+
+    path = Path(path)
+    trusted_root = Path(trusted_root)
+    try:
+        relative = path.relative_to(trusted_root)
+    except ValueError:
+        raise RuntimeError("local application metadata is unavailable") from None
+    with ExitStack() as locks:
+        locks.enter_context(_locked_local_metadata_directory(trusted_root))
+        current = trusted_root
+        for part in relative.parts:
+            current /= part
+            try:
+                current.mkdir(parents=False, exist_ok=False)
+            except FileExistsError:
+                pass
+            except OSError:
+                raise RuntimeError(
+                    "local application metadata is unavailable"
+                ) from None
+            locks.enter_context(_locked_local_metadata_directory(current))
 
 
 def _assert_local_regular_source(path: Path) -> os.stat_result:
@@ -809,11 +1016,20 @@ def initialize_runtime_config(plan: BootstrapPlan) -> StoredConfig:
 
     if not isinstance(plan, BootstrapPlan):
         raise TypeError("plan must be a BootstrapPlan")
+    rdp_directory = Path(str(plan.paths.rdp_directory))
+    metadata_root = rdp_directory.parent.parent
     for operation in plan.directories:
-        Path(str(operation.path)).mkdir(
-            parents=operation.parents,
-            exist_ok=operation.exist_ok,
-        )
+        directory = Path(str(operation.path))
+        if _metadata_host_is_windows() and directory.is_relative_to(
+            metadata_root
+        ):
+            _ensure_local_metadata_directory(directory, metadata_root)
+        else:
+            directory.mkdir(
+                parents=operation.parents,
+                exist_ok=operation.exist_ok,
+            )
+    _assert_local_metadata_root(rdp_directory)
     store = ConfigStore(Path(str(plan.paths.config_file)))
     stored = store.load()
     if stored.generation == 0:
@@ -850,7 +1066,10 @@ def host_bootstrap_plan(environment: Environment, *, frozen: bool) -> BootstrapP
         deployment = select_deployment(environment, frozen=frozen)
         if deployment is not DeploymentKind.PORTABLE:
             raise RuntimeError("LOCALAPPDATA is unavailable")
-        local_app_data = str(current_binary.parent)
+        raise ValueError(
+            "portable RDP artifacts require per-user LocalAppData"
+        )
+    _assert_local_metadata_root(Path(local_app_data))
     if frozen:
         application_root = current_binary.parent
         resource_root = Path(

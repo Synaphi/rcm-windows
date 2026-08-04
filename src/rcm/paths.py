@@ -97,6 +97,22 @@ def join_relative(root: PathValue, relative: PathValue) -> PurePath:
     return base.joinpath(*child.parts)
 
 
+def _paths_overlap(first: PurePath, second: PurePath) -> bool:
+    """Return whether either lexical path contains the other."""
+
+    def key(path: PurePath) -> tuple[str, ...]:
+        if isinstance(path, PureWindowsPath):
+            return tuple(part.casefold() for part in path.parts)
+        return tuple(path.parts)
+
+    left = key(first)
+    right = key(second)
+    return (
+        left == right[:len(left)]
+        or right == left[:len(right)]
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class KnownFolders:
     """Windows Known Folder values supplied by a platform adapter."""
@@ -155,17 +171,6 @@ def plan_runtime_paths(
     resources = absolute_local_path(resource_root, label="resource root")
     binary = absolute_local_path(current_binary, label="current binary")
 
-    if (
-        identity.deployment is DeploymentKind.PORTABLE
-        and known_folders.local_app_data in {
-            app_root,
-            binary.parent,
-        }
-    ):
-        raise ValueError(
-            "portable RDP artifacts require per-user LocalAppData"
-        )
-
     if identity.deployment is DeploymentKind.PORTABLE:
         config_directory = app_root / "data"
     else:
@@ -176,6 +181,16 @@ def plan_runtime_paths(
     rdp_directory = (
         known_folders.local_app_data / identity.config_namespace / "rdp"
     )
+    if (
+        identity.deployment is DeploymentKind.PORTABLE
+        and (
+            _paths_overlap(app_root, rdp_directory)
+            or _paths_overlap(binary.parent, rdp_directory)
+        )
+    ):
+        raise ValueError(
+            "portable RDP artifacts require separate per-user LocalAppData"
+        )
 
     return RuntimePaths(
         application_root=app_root,
