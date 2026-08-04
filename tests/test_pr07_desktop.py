@@ -4,6 +4,7 @@ from collections.abc import Callable
 import ctypes
 import inspect
 import os
+import socket
 from threading import Event
 import time
 from types import SimpleNamespace
@@ -311,85 +312,182 @@ class DesktopTests(unittest.TestCase):
 
         host._rdp_draft.assert_not_called()
 
-    def test_rdp_probe_bounds_blocking_name_resolution(self) -> None:
-        release = Event()
-        started = Event()
-
-        def block(*_args: object, **_kwargs: object) -> list[object]:
-            started.set()
-            release.wait(1.0)
-            return []
-
-        began = time.monotonic()
-        try:
-            with mock.patch("socket.getaddrinfo", side_effect=block):
-                self.assertFalse(
-                    windows_desktop._tcp_rdp_probe(
-                        "worker.example", 3_389, 0.02
-                    )
-                )
-            self.assertTrue(started.is_set())
-            self.assertLess(time.monotonic() - began, 0.5)
-        finally:
-            release.set()
-            with windows_desktop._RDP_DNS_THREADS_LOCK:
-                resolvers = tuple(windows_desktop._RDP_DNS_THREADS)
-            for resolver in resolvers:
-                resolver.join(1.0)
-
-    def test_rdp_probe_opens_and_closes_only_requested_endpoint(self) -> None:
-        connection = mock.Mock()
+    def test_rdp_probe_fails_closed_for_hostname_without_dns_or_thread(self) -> None:
         with (
             mock.patch(
                 "socket.getaddrinfo",
-                return_value=[(2, 1, 6, "", ("192.0.2.20", 3_390))],
+                side_effect=AssertionError("DNS must not be requested"),
             ) as resolve,
-            mock.patch("socket.socket", return_value=connection) as create,
-        ):
-            self.assertTrue(
-                windows_desktop._tcp_rdp_probe(
-                    "worker.example", 3_390, 4.0
-                )
-            )
-        resolve.assert_called_once_with(
-            "worker.example",
-            3_390,
-            family=0,
-            type=1,
-            proto=6,
-        )
-        create.assert_called_once_with(2, 1, 6)
-        connection.settimeout.assert_called_once()
-        connection.connect.assert_called_once_with(("192.0.2.20", 3_390))
-        connection.close.assert_called_once_with()
-
-    def test_rdp_probe_uses_one_deadline_across_resolved_addresses(self) -> None:
-        first = mock.Mock()
-        second = mock.Mock()
-        first.connect.side_effect = OSError("synthetic first failure")
-        second.connect.side_effect = OSError("synthetic second failure")
-        addresses = [
-            (2, 1, 6, "", ("192.0.2.20", 3_389)),
-            (2, 1, 6, "", ("192.0.2.21", 3_389)),
-        ]
-        with (
-            mock.patch("socket.getaddrinfo", return_value=addresses),
-            mock.patch("socket.socket", side_effect=(first, second)),
             mock.patch.object(
-                windows_desktop.time,
-                "monotonic",
-                side_effect=(100.0, 100.0, 100.0, 101.5),
-            ),
+                windows_desktop,
+                "Thread",
+                side_effect=AssertionError("resolver thread must not start"),
+            ) as thread,
         ):
             self.assertFalse(
                 windows_desktop._tcp_rdp_probe(
-                    "worker.example", 3_389, 2.0
+                    "worker.example", 3_389, 0.02
                 )
             )
-        first.settimeout.assert_called_once_with(2.0)
-        second.settimeout.assert_called_once_with(0.5)
-        first.close.assert_called_once_with()
-        second.close.assert_called_once_with()
+        resolve.assert_not_called()
+        thread.assert_not_called()
+
+    def test_rdp_probe_opens_and_closes_only_requested_endpoint(self) -> None:
+        connection = mock.Mock()
+        connection.connect_ex.return_value = 10035
+        connection.getsockopt.return_value = 0
+        with (
+            mock.patch("socket.socket", return_value=connection) as create,
+            mock.patch("select.select", return_value=((), (connection,), ())),
+        ):
+            self.assertTrue(
+                windows_desktop._tcp_rdp_probe(
+                    "192.0.2.20", 3_390, 4.0
+                )
+            )
+        create.assert_called_once_with(
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+        )
+        connection.setblocking.assert_called_once_with(False)
+        connection.connect_ex.assert_called_once_with(("192.0.2.20", 3_390))
+        connection.close.assert_called_once_with()
+
+    def test_rdp_probe_supports_ipv6_and_closes_on_cancellation(self) -> None:
+        ipv6 = mock.Mock()
+        ipv6.connect_ex.return_value = 0
+        cancelled = Event()
+        cancelled.set()
+        with (
+            mock.patch("socket.socket", return_value=ipv6) as create,
+        ):
+            self.assertTrue(
+                windows_desktop._tcp_rdp_probe("2001:db8::20", 3_389, 2.0)
+            )
+            self.assertFalse(
+                windows_desktop._tcp_rdp_probe(
+                    "2001:db8::20",
+                    3_389,
+                    2.0,
+                    cancellation=cancelled,
+                )
+            )
+        create.assert_called_once_with(
+            socket.AF_INET6,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+        )
+        ipv6.connect_ex.assert_called_once_with(("2001:db8::20", 3_389, 0, 0))
+        ipv6.close.assert_called_once_with()
+
+    def test_rdp_probe_cancels_while_nonblocking_connect_is_pending(self) -> None:
+        connection = mock.Mock()
+        connection.connect_ex.return_value = 10035
+        cancellation = Event()
+
+        def poll(
+            *_args: object,
+            **_kwargs: object,
+        ) -> tuple[tuple[object, ...], tuple[object, ...], tuple[object, ...]]:
+            cancellation.set()
+            return (), (), ()
+
+        with (
+            mock.patch("socket.socket", return_value=connection),
+            mock.patch("select.select", side_effect=poll) as select_call,
+        ):
+            self.assertFalse(windows_desktop._tcp_rdp_probe(
+                "192.0.2.20",
+                3_389,
+                2.0,
+                cancellation=cancellation,
+            ))
+
+        select_call.assert_called_once()
+        connection.close.assert_called_once_with()
+
+    def test_dispose_cancels_and_joins_the_single_rdp_probe(self) -> None:
+        host = TkDesktopHost()
+        entered = Event()
+        connection = mock.Mock()
+        connection.connect_ex.return_value = 10035
+        host._root = SimpleNamespace(
+            after=lambda _delay, _callback: object(),
+            after_cancel=lambda _token: None,
+            winfo_exists=lambda: False,
+        )
+        host._tk = object()
+        host._tray = mock.Mock()
+        host._dialogs = {}
+        host._state = RenderState(rdp_connect_timeout_seconds=2)
+        host._rdp_form = {
+            "dialog": SimpleNamespace(winfo_exists=lambda: True),
+            "address": SimpleNamespace(get=lambda: "192.0.2.20"),
+            "principal": SimpleNamespace(get=lambda: ""),
+            "port": SimpleNamespace(get=lambda: "3389"),
+            "clipboard": SimpleNamespace(get=lambda: False),
+            "connect": mock.Mock(),
+            "status": mock.Mock(),
+            "anyway": mock.Mock(),
+            "probe_timer": None,
+            "inflight": False,
+        }
+
+        def poll(
+            *_args: object,
+            **_kwargs: object,
+        ) -> tuple[tuple[object, ...], tuple[object, ...], tuple[object, ...]]:
+            entered.set()
+            time.sleep(0.01)
+            return (), (), ()
+
+        with (
+            mock.patch("socket.socket", return_value=connection),
+            mock.patch("select.select", side_effect=poll),
+        ):
+            host._begin_rdp_preflight()
+            self.assertTrue(entered.wait(1.0))
+            with host._rdp_probe_threads_lock:
+                probes = tuple(host._rdp_probe_threads)
+            self.assertEqual(1, len(probes))
+
+            host.dispose()
+
+        self.assertFalse(probes[0].is_alive())
+        self.assertEqual(set(), host._rdp_probe_threads)
+
+    def test_hostname_failure_enables_connect_anyway_to_exact_command(self) -> None:
+        emitted: list[UiCommand] = []
+        draft = RdpDraft("worker.example", "", 3_389)
+        form = {
+            "dialog": SimpleNamespace(winfo_exists=lambda: True),
+            "address": SimpleNamespace(get=lambda: "worker.example"),
+            "principal": SimpleNamespace(get=lambda: ""),
+            "port": SimpleNamespace(get=lambda: "3389"),
+            "clipboard": SimpleNamespace(get=lambda: False),
+            "connect": mock.Mock(),
+            "status": mock.Mock(),
+            "anyway": mock.Mock(),
+            "probe_timer": None,
+            "inflight": True,
+        }
+        host = object.__new__(TkDesktopHost)
+        host._rdp_probe_generation = 4
+        host._rdp_probe_cancel = None
+        host._rdp_form = form
+        host._root = SimpleNamespace(after_cancel=lambda _token: None)
+        host._state = RenderState()
+        host._sequence = 0
+        host._command = emitted.append
+
+        host._finish_rdp_preflight(4, draft, False)
+        form["anyway"].configure.assert_called_with(state="normal")
+        host._launch_rdp(draft)
+
+        self.assertEqual(1, len(emitted))
+        self.assertEqual(CommandKind.OPEN_RDP, emitted[0].kind)
+        self.assertEqual("worker.example", emitted[0].field("address"))
 
     def test_tk_host_exposes_only_the_two_local_admin_apply_intents(
         self,

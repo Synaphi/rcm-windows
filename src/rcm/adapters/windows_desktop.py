@@ -34,11 +34,6 @@ from ..ui.state import (
 from ..ui.status_board import StatusBoardView
 
 
-_RDP_DNS_SLOT = Lock()
-_RDP_DNS_THREADS_LOCK = Lock()
-_RDP_DNS_THREADS: set[Thread] = set()
-
-
 class _Tray(Protocol):
     def start(self) -> None: ...
 
@@ -191,6 +186,8 @@ class TkDesktopHost(DesktopHost):
         self._rdp_probe_generation = 0
         self._rdp_probe_threads: set[Thread] = set()
         self._rdp_probe_threads_lock = Lock()
+        self._rdp_probe_cancel: Event | None = None
+        self._rdp_probe_is_default = rdp_probe is None
         self._rdp_probe = _tcp_rdp_probe if rdp_probe is None else rdp_probe
         if not callable(self._rdp_probe):
             raise TypeError("rdp_probe must be callable")
@@ -400,11 +397,7 @@ class TkDesktopHost(DesktopHost):
         with self._rdp_probe_threads_lock:
             probes = tuple(self._rdp_probe_threads)
         for probe in probes:
-            probe.join(0.05)
-        with _RDP_DNS_THREADS_LOCK:
-            resolvers = tuple(_RDP_DNS_THREADS)
-        for resolver in resolvers:
-            resolver.join(0.05)
+            probe.join(0.25)
 
     def _emit(
         self,
@@ -642,6 +635,9 @@ class TkDesktopHost(DesktopHost):
 
     def _invalidate_rdp_preflight(self, *, clear_status: bool = True) -> None:
         self._rdp_probe_generation += 1
+        cancellation = getattr(self, "_rdp_probe_cancel", None)
+        if cancellation is not None:
+            cancellation.set()
         form = self._rdp_form
         if form is None:
             return
@@ -701,6 +697,8 @@ class TkDesktopHost(DesktopHost):
         form["anyway"].configure(state="disabled")
         form["inflight"] = True
         timeout = float(self._state.rdp_connect_timeout_seconds)
+        cancellation = Event() if self._rdp_probe_is_default else None
+        self._rdp_probe_cancel = cancellation
         form["probe_timer"] = self._root.after(
             max(1, math.ceil(timeout * 1_000)),
             lambda: self._expire_rdp_preflight(generation, draft),
@@ -708,9 +706,17 @@ class TkDesktopHost(DesktopHost):
 
         def probe() -> None:
             try:
-                reachable = bool(
-                    self._rdp_probe(draft.address, draft.port, timeout)
-                )
+                if cancellation is None:
+                    reachable = bool(
+                        self._rdp_probe(draft.address, draft.port, timeout)
+                    )
+                else:
+                    reachable = bool(self._rdp_probe(
+                        draft.address,
+                        draft.port,
+                        timeout,
+                        cancellation=cancellation,
+                    ))
             except Exception:
                 reachable = False
             try:
@@ -725,6 +731,8 @@ class TkDesktopHost(DesktopHost):
             finally:
                 with self._rdp_probe_threads_lock:
                     self._rdp_probe_threads.discard(current_thread())
+                    if self._rdp_probe_cancel is cancellation:
+                        self._rdp_probe_cancel = None
 
         thread = Thread(
             target=probe,
@@ -738,6 +746,8 @@ class TkDesktopHost(DesktopHost):
         except Exception:
             with self._rdp_probe_threads_lock:
                 self._rdp_probe_threads.discard(thread)
+                if self._rdp_probe_cancel is cancellation:
+                    self._rdp_probe_cancel = None
             self._finish_rdp_preflight(generation, draft, False)
 
     def _expire_rdp_preflight(
@@ -922,9 +932,18 @@ def _default_tray(show: Callable[[], None], quit_: Callable[[], None]) -> _Tray:
     return _PystrayTray(icon)
 
 
-def _tcp_rdp_probe(address: str, port: int, timeout_seconds: float) -> bool:
-    """Check one endpoint within one overall deadline; send no protocol data."""
+def _tcp_rdp_probe(
+    address: str,
+    port: int,
+    timeout_seconds: float,
+    *,
+    cancellation: Event | None = None,
+) -> bool:
+    """Probe one numeric IP with a cancellable, data-free TCP connect."""
 
+    import errno
+    import ipaddress
+    import select
     import socket
 
     if (
@@ -934,59 +953,63 @@ def _tcp_rdp_probe(address: str, port: int, timeout_seconds: float) -> bool:
         or timeout_seconds <= 0
     ):
         raise ValueError("RDP probe timeout must be finite and positive")
-    deadline = time.monotonic() + float(timeout_seconds)
-    resolved: list[tuple[Any, ...]] = []
-    finished = Event()
-
-    if not _RDP_DNS_SLOT.acquire(blocking=False):
-        return False
-
-    def resolve() -> None:
-        try:
-            resolved.extend(socket.getaddrinfo(
-                address,
-                port,
-                family=socket.AF_UNSPEC,
-                type=socket.SOCK_STREAM,
-                proto=socket.IPPROTO_TCP,
-            ))
-        except Exception:
-            pass
-        finally:
-            finished.set()
-            with _RDP_DNS_THREADS_LOCK:
-                _RDP_DNS_THREADS.discard(current_thread())
-            _RDP_DNS_SLOT.release()
-
-    resolver = Thread(target=resolve, name="rcm-rdp-dns", daemon=True)
-    with _RDP_DNS_THREADS_LOCK:
-        _RDP_DNS_THREADS.add(resolver)
+    if cancellation is not None and not isinstance(cancellation, Event):
+        raise TypeError("RDP probe cancellation must be an Event")
     try:
-        resolver.start()
-    except Exception:
-        with _RDP_DNS_THREADS_LOCK:
-            _RDP_DNS_THREADS.discard(resolver)
-        _RDP_DNS_SLOT.release()
+        ip = ipaddress.ip_address(address)
+    except ValueError:
         return False
-    remaining = deadline - time.monotonic()
-    if remaining <= 0 or not finished.wait(remaining):
-        return False
-    for family, kind, protocol, _canonical, endpoint in tuple(resolved):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+    family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+    endpoint: tuple[Any, ...] = (
+        (str(ip), port, 0, 0) if ip.version == 6 else (str(ip), port)
+    )
+    pending = {
+        errno.EINPROGRESS,
+        errno.EWOULDBLOCK,
+        errno.EALREADY,
+        10035,  # WSAEWOULDBLOCK
+        10036,  # WSAEINPROGRESS
+        10037,  # WSAEALREADY
+    }
+    deadline = time.monotonic() + float(timeout_seconds)
+    connection = None
+    try:
+        if cancellation is not None and cancellation.is_set():
             return False
-        connection = None
-        try:
-            connection = socket.socket(family, kind, protocol)
-            connection.settimeout(remaining)
-            connection.connect(endpoint)
+        connection = socket.socket(
+            family,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+        )
+        connection.setblocking(False)
+        error = int(connection.connect_ex(endpoint))
+        if error == 0:
             return True
-        except OSError:
-            pass
-        finally:
-            if connection is not None:
-                connection.close()
-    return False
+        if error not in pending:
+            return False
+        while True:
+            if cancellation is not None and cancellation.is_set():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            _readable, writable, exceptional = select.select(
+                (),
+                (connection,),
+                (connection,),
+                min(0.05, remaining),
+            )
+            if not writable and not exceptional:
+                continue
+            return int(connection.getsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_ERROR,
+            )) == 0
+    except OSError:
+        return False
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 __all__ = (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 import tempfile
@@ -13,6 +14,7 @@ from fake_test_kit.guard import NoLiveAccessGuard
 from fake_test_kit.privilege import FakePrivilegeBoundary
 from rcm.app import main as run_desktop
 from rcm.app import render_state_from_config
+from rcm.adapters.windows import compose_local_ray, compose_native_rdp
 from rcm.bootstrap import BootstrapRequest, Environment, plan_bootstrap
 from rcm.config.store import ConfigConflictError, ConfigStore, StoredConfig
 from rcm.paths import KnownFolders
@@ -82,6 +84,105 @@ class IntegratedHost:
 
 
 class IntegratedUiTests(unittest.TestCase):
+    def test_production_rdp_composition_is_prompt_only_and_runtime_owned(
+        self,
+    ) -> None:
+        class Filesystem:
+            def __init__(self) -> None:
+                self.files: dict[str, bytes] = {}
+
+            def write_bytes(self, path: str, data: bytes) -> None:
+                if path in self.files:
+                    raise FileExistsError(path)
+                self.files[path] = data
+
+            def unlink(self, path: str, *, missing_ok: bool = False) -> None:
+                if path not in self.files and not missing_ok:
+                    raise FileNotFoundError(path)
+                self.files.pop(path, None)
+
+            def listdir(self, _path: str) -> tuple[str, ...]:
+                return tuple(Path(path).name for path in self.files)
+
+        filesystem = Filesystem()
+        process = SimpleNamespace(
+            pid=41_102,
+            terminate=mock.Mock(side_effect=AssertionError("must not terminate")),
+            kill=mock.Mock(side_effect=AssertionError("must not kill")),
+            wait=mock.Mock(side_effect=AssertionError("must not wait")),
+        )
+        fallbacks: list[UiCommand] = []
+        directory = r"C:\Synthetic\Rdp"
+        with (
+            mock.patch(
+                "rcm.adapters.windows.LocalRdpFilesystem",
+                return_value=filesystem,
+            ),
+            mock.patch("rcm.setup._assert_local_metadata_root"),
+        ):
+            rdp_handler, runtime = compose_native_rdp(
+                directory,
+                lambda command: fallbacks.append(command),
+            )
+            handler = compose_local_ray(default_config(), rdp_handler)
+            with (
+                mock.patch(
+                    "rcm.adapters.windows.WindowsRdpLauncher._mstsc_path",
+                    return_value=r"C:\Synthetic\System32\mstsc.exe",
+                ),
+                mock.patch("sys.platform", "win32"),
+                mock.patch("subprocess.Popen", return_value=process) as launch,
+                mock.patch(
+                    "rcm.adapters.windows_credentials.WindowsCredentialStore.contains",
+                    side_effect=AssertionError("credential lookup is forbidden"),
+                ) as contains,
+                mock.patch(
+                    "rcm.adapters.windows_credentials.WindowsCredentialStore.resolve",
+                    side_effect=AssertionError("credential lookup is forbidden"),
+                ) as resolve,
+            ):
+                started = runtime.start()
+                result = handler(UiCommand(
+                    1,
+                    CommandKind.OPEN_RDP,
+                    (
+                        ("address", "192.0.2.20"),
+                        ("principal", r"SYNTHETIC\operator"),
+                        ("port", 3_389),
+                        ("redirect_clipboard", False),
+                    ),
+                ))
+                artifacts = tuple(filesystem.files)
+                self.assertEqual("running", started.state)
+                self.assertEqual("rdp_opened", result.code)
+                self.assertEqual(1, len(artifacts))
+                raw = filesystem.files[artifacts[0]]
+                decoded = raw.decode("utf-16")
+                self.assertIn("prompt for credentials:i:1", decoded)
+                self.assertIn("authentication level:i:2", decoded)
+                self.assertIn("enablecredsspsupport:i:1", decoded)
+                self.assertIn("redirectclipboard:i:0", decoded)
+                self.assertNotIn("password", decoded.casefold())
+                self.assertNotIn("credential_reference", decoded.casefold())
+                launched_argv = launch.call_args.args[0]
+                self.assertEqual(
+                    r"C:\Synthetic\System32\mstsc.exe",
+                    launched_argv[0],
+                )
+                self.assertEqual(artifacts[0], launched_argv[1])
+                self.assertTrue(launch.call_args.kwargs["close_fds"])
+
+                stopped = runtime.stop()
+
+            self.assertEqual("stopped", stopped.state)
+            self.assertEqual({}, filesystem.files)
+        self.assertEqual([], fallbacks)
+        contains.assert_not_called()
+        resolve.assert_not_called()
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+        process.wait.assert_not_called()
+
     def test_rdp_command_handler_launches_only_password_free_typed_request(
         self,
     ) -> None:
@@ -297,9 +398,11 @@ class IntegratedUiTests(unittest.TestCase):
     def test_first_launch_persists_defaults_and_reuses_valid_config(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rcm-config-startup-") as temporary:
             root = Path(temporary).resolve()
+            local_app_data = root / "local"
+            local_app_data.mkdir()
             plan = plan_bootstrap(BootstrapRequest(
                 environment=Environment({}),
-                known_folders=KnownFolders(local_app_data=root / "local"),
+                known_folders=KnownFolders(local_app_data=local_app_data),
                 application_root=root / "app",
                 resource_root=root / "resources",
                 current_binary=root / "app" / "python.exe",
@@ -334,10 +437,12 @@ class IntegratedUiTests(unittest.TestCase):
                 ({"RCM_PORTABLE": "1"}, "portable"),
             ):
                 with self.subTest(expected=expected):
+                    local_app_data = root / expected / "local"
+                    local_app_data.mkdir(parents=True)
                     plan = plan_bootstrap(BootstrapRequest(
                         environment=Environment(values),
                         known_folders=KnownFolders(
-                            local_app_data=root / expected / "local"),
+                            local_app_data=local_app_data),
                         application_root=root / expected / "app",
                         resource_root=root / expected / "resources",
                         current_binary=root / expected / "app" / "rcm.exe",
@@ -352,9 +457,11 @@ class IntegratedUiTests(unittest.TestCase):
     def test_first_launch_conflict_reloads_strict_winner(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rcm-config-race-") as temporary:
             root = Path(temporary).resolve()
+            local_app_data = root / "local"
+            local_app_data.mkdir()
             plan = plan_bootstrap(BootstrapRequest(
                 environment=Environment({}),
-                known_folders=KnownFolders(local_app_data=root / "local"),
+                known_folders=KnownFolders(local_app_data=local_app_data),
                 application_root=root / "app",
                 resource_root=root / "resources",
                 current_binary=root / "app" / "rcm.exe",
@@ -394,6 +501,174 @@ class IntegratedUiTests(unittest.TestCase):
                     Environment({"RCM_PORTABLE": "1"}),
                     frozen=False,
                 )
+
+    def test_host_plan_rejects_mapped_local_metadata_before_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {"LOCALAPPDATA": temporary},
+                    clear=True,
+                ),
+                mock.patch(
+                    "rcm.setup._windows_drive_type",
+                    return_value=4,
+                ),
+                mock.patch(
+                    "rcm.setup._metadata_host_is_windows",
+                    return_value=True,
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "local application metadata is unavailable",
+                ),
+            ):
+                host_bootstrap_plan(Environment(), frozen=False)
+
+    def test_local_metadata_reparse_alias_is_rejected(self) -> None:
+        directory = SimpleNamespace(
+            st_mode=__import__("stat").S_IFDIR,
+            st_file_attributes=0x400,
+        )
+        with (
+            mock.patch(
+                "rcm.setup._metadata_host_is_windows",
+                return_value=True,
+            ),
+            mock.patch("rcm.setup._windows_drive_type", return_value=3),
+            mock.patch("rcm.setup.os.stat", return_value=directory),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "local application metadata is unavailable",
+            ),
+        ):
+            from rcm.setup import _assert_local_metadata_root
+
+            _assert_local_metadata_root(Path(r"C:\Synthetic\LocalAppData"))
+
+    def test_local_metadata_accepts_only_a_fixed_drive(self) -> None:
+        from rcm.setup import _assert_local_metadata_root
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            for drive_type in (0, 1, 2, 4, 5, 6):
+                with (
+                    self.subTest(drive_type=drive_type),
+                    mock.patch(
+                        "rcm.setup._metadata_host_is_windows",
+                        return_value=True,
+                    ),
+                    mock.patch(
+                        "rcm.setup._windows_drive_type",
+                        return_value=drive_type,
+                    ),
+                    self.assertRaisesRegex(
+                        RuntimeError,
+                        "local application metadata is unavailable",
+                    ),
+                ):
+                    _assert_local_metadata_root(path)
+            with (
+                mock.patch(
+                    "rcm.setup._metadata_host_is_windows",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "rcm.setup._windows_drive_type",
+                    return_value=3,
+                ),
+            ):
+                _assert_local_metadata_root(path)
+
+    def test_generated_rdp_child_reparse_is_rejected(self) -> None:
+        regular = SimpleNamespace(
+            st_mode=__import__("stat").S_IFDIR,
+            st_file_attributes=0,
+        )
+        reparse = SimpleNamespace(
+            st_mode=__import__("stat").S_IFDIR,
+            st_file_attributes=0x400,
+        )
+
+        def inspect(path: object, *, follow_symlinks: bool) -> object:
+            self.assertFalse(follow_symlinks)
+            return reparse if str(path).casefold().endswith("rdp") else regular
+
+        with (
+            mock.patch(
+                "rcm.setup._metadata_host_is_windows",
+                return_value=True,
+            ),
+            mock.patch("rcm.setup._windows_drive_type", return_value=3),
+            mock.patch("rcm.setup.os.stat", side_effect=inspect),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "local application metadata is unavailable",
+            ),
+        ):
+            from rcm.setup import _assert_local_metadata_root
+
+            _assert_local_metadata_root(
+                Path(r"C:\Synthetic\LocalAppData\RayClusterManager\rdp")
+            )
+
+    def test_metadata_creation_validates_before_descending_into_namespace(
+        self,
+    ) -> None:
+        from rcm.setup import _ensure_local_metadata_directory
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            namespace = root / "RayClusterManager"
+            destination = namespace / "rdp"
+            events: list[tuple[str, Path]] = []
+            active: list[Path] = []
+
+            @contextmanager
+            def lock(path: Path) -> Iterator[None]:
+                value = Path(path)
+                events.append(("lock-enter", value))
+                active.append(value)
+                try:
+                    yield
+                finally:
+                    self.assertEqual(value, active.pop())
+                    events.append(("lock-exit", value))
+
+            def create(
+                path: Path,
+                *,
+                parents: bool,
+                exist_ok: bool,
+            ) -> None:
+                self.assertFalse(parents)
+                self.assertFalse(exist_ok)
+                value = Path(path)
+                self.assertIn(value.parent, active)
+                events.append(("mkdir", value))
+
+            with (
+                mock.patch(
+                    "rcm.setup._locked_local_metadata_directory",
+                    side_effect=lock,
+                ),
+                mock.patch.object(Path, "mkdir", autospec=True, side_effect=create),
+            ):
+                _ensure_local_metadata_directory(destination, root)
+
+        self.assertEqual(
+            [
+                ("lock-enter", root),
+                ("mkdir", namespace),
+                ("lock-enter", namespace),
+                ("mkdir", destination),
+                ("lock-enter", destination),
+                ("lock-exit", destination),
+                ("lock-exit", namespace),
+                ("lock-exit", root),
+            ],
+            events,
+        )
 
     def test_setup_fields_add_then_replace_only_the_local_node(self) -> None:
         original = replace(
