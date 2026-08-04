@@ -136,6 +136,8 @@ class ProcessResult:
     duration_seconds: float = 0.0
     timed_out: bool = False
     cancelled: bool = False
+    output_truncated: bool = False
+    output_invalid_encoding: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -146,7 +148,12 @@ class ProcessResult:
         if not isinstance(self.stdout, str) or not isinstance(self.stderr, str):
             raise TypeError("process output must be text")
         duration = _finite_seconds(self.duration_seconds, "process duration")
-        if type(self.timed_out) is not bool or type(self.cancelled) is not bool:
+        if (
+            type(self.timed_out) is not bool
+            or type(self.cancelled) is not bool
+            or type(self.output_truncated) is not bool
+            or type(self.output_invalid_encoding) is not bool
+        ):
             raise TypeError("process terminal flags must be bool values")
         if self.timed_out and self.cancelled:
             raise ValueError("a process result cannot be both timed out and cancelled")

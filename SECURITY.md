@@ -49,6 +49,15 @@ The intended boundary is local-first:
   strips inherited Ray/Python/pip injection variables, gives each node a full
   local per-user Ray temp path, keeps the dashboard on loopback, and exposes no
   remote RCM cluster command;
+- the uncomposed cluster-state observer uses only five bounded local Ray State
+  CLI JSON queries over at most 32 enabled nodes; topology mismatch (including
+  duplicate live Ray node IDs), stale or partial evidence, non-standard JSON
+  constants, duplicate JSON keys, invalid UTF-8, truncation, timeout, and cancellation fail
+  closed to `UNKNOWN`, while independently known active work remains `BUSY`;
+  only Ray 2.55.1's exact exit-zero sentinel with one LF or CRLF line ending is
+  normalized to an empty list, and a whitespace variant, warning, or
+  truncation is not; freshness is bounded before the first query and assessed
+  only after the complete observation in the same monotonic clock domain;
 - the desktop application normally runs without elevation;
 - privileged local changes are disabled in the unsigned one-file preview;
 - configuration and logs remain in local application data, and configuration
@@ -72,6 +81,19 @@ an unsupported Ray version proceeds, command output or the configured path is
 disclosed, an inherited environment can redirect the Ray address or temp path,
 a worker reuses another account's temp path, or failed local-head verification
 does not attempt local rollback.
+
+Cluster-state `IDLE` means only that a complete, fresh, topology-clean sample
+contained no active work. It is not an admission fence and cannot exclude a
+submission by another process between observation and a later operation. The
+existing maintenance guard is process-local. Treat any destructive or
+disruptive cluster operation that relies on observation alone as unsafe until
+a separate admission/fencing design is implemented. A report is also relevant
+if malformed, partial, stale, truncated, or ambiguous state is accepted as
+idle; an unexpected live node is ignored; active work is downgraded by another
+failed query; or raw Ray entrypoint/metadata content reaches logs, persistence,
+or UI. The observer must not probe a disabled configuration, import the Ray
+SDK, use product Dashboard HTTP access, or discover an executable through
+`PATH`.
 
 The persisted import receipt, logs, and provenance must not serialize the
 migration planner's private overlay, source contents, node values, user names,

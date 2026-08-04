@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import ipaddress
+import json
 import math
 import ntpath
 from pathlib import PureWindowsPath
@@ -13,9 +14,14 @@ from typing import Protocol
 from ..core import (
     ActionResult, ActionStatus, Node, RejectedError, StaleError, UnsupportedError,
 )
+from ..cluster import (
+    ClusterMember, ClusterMemberState, ClusterSnapshot,
+    ClusterWorkloadEvidence, MAX_OBSERVED_NODES,
+)
 from ..ports import CancellationToken, ProcessRequest, ProcessResult, ProcessRunner
 from ..ray import (
-    RayCommand, RayCommandBuilder, RayMode, RayStartSpec, RayStatusSpec, RayStopSpec,
+    RayCommand, RayCommandBuilder, RayMode, RayStartSpec, RayStateListSpec,
+    RayStateResource, RayStatusSpec, RayStopSpec,
 )
 
 
@@ -242,6 +248,38 @@ class LocalRayProcessRunner:
             value_options=frozenset({"--address"}),
         ):
             return
+        if verb == "list" and len(argv) >= 11:
+            try:
+                resource = RayStateResource(argv[2])
+                filter_count = {
+                    RayStateResource.NODES: 0,
+                    RayStateResource.JOBS: 3,
+                    RayStateResource.TASKS: 2,
+                    RayStateResource.ACTORS: 1,
+                    RayStateResource.PLACEMENT_GROUPS: 1,
+                }[resource]
+                suffix_at = 5 + filter_count * 2
+                if argv[3:5] != ("--format", "json"):
+                    raise ValueError
+                if len(argv) != suffix_at + 6:
+                    raise ValueError
+                if argv[suffix_at::2] != (
+                    "--address", "--timeout", "--limit",
+                ):
+                    raise ValueError
+                spec = RayStateListSpec(
+                    argv[0],
+                    resource,
+                    argv[suffix_at + 1],
+                    int(argv[suffix_at + 3]),
+                    int(argv[suffix_at + 5]),
+                )
+                expected = RayCommandBuilder().list_state(spec).arguments
+            except (KeyError, TypeError, ValueError):
+                pass
+            else:
+                if argv == expected:
+                    return
         raise ValueError("Ray command is outside the local CLI allowlist")
 
     def _assert_executable(self) -> None:
@@ -299,6 +337,7 @@ class LocalRayProcessRunner:
         output = {"stdout": bytearray(), "stderr": bytearray()}
         output_lock = Lock()
         remaining = [request.max_output_bytes]
+        output_truncated = [False]
 
         def drain(name: str, stream: object) -> None:
             try:
@@ -314,6 +353,8 @@ class LocalRayProcessRunner:
                         if keep:
                             output[name].extend(chunk[:keep])
                             remaining[0] -= keep
+                        if keep < len(chunk):
+                            output_truncated[0] = True
             finally:
                 try:
                     stream.close()  # type: ignore[attr-defined]
@@ -358,13 +399,322 @@ class LocalRayProcessRunner:
                     pass
                 reader.join(0.5)
         duration = max(0.0, time.monotonic() - started)
+        invalid_encoding = False
+        try:
+            stdout = bytes(output["stdout"]).decode("utf-8", errors="strict")
+            stderr = bytes(output["stderr"]).decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            stdout = ""
+            stderr = ""
+            invalid_encoding = True
         return ProcessResult(
             None if timed_out or cancelled else process.returncode,
-            stdout=bytes(output["stdout"]).decode("utf-8", errors="replace"),
-            stderr=bytes(output["stderr"]).decode("utf-8", errors="replace"),
+            stdout=stdout,
+            stderr=stderr,
             duration_seconds=duration,
             timed_out=timed_out,
             cancelled=cancelled,
+            output_truncated=output_truncated[0],
+            output_invalid_encoding=invalid_encoding,
+        )
+
+
+_KNOWN_ACTIVE_STATES = {
+    RayStateResource.JOBS: frozenset({"PENDING", "RUNNING"}),
+    RayStateResource.TASKS: frozenset({
+        "NIL", "PENDING_ARGS_AVAIL", "PENDING_NODE_ASSIGNMENT",
+        "PENDING_OBJ_STORE_MEM_AVAIL", "PENDING_ARGS_FETCH",
+        "SUBMITTED_TO_WORKER", "PENDING_ACTOR_TASK_ARGS_FETCH",
+        "PENDING_ACTOR_TASK_ORDERING_OR_CONCURRENCY", "RUNNING",
+        "RUNNING_IN_RAY_GET", "RUNNING_IN_RAY_WAIT",
+        "GETTING_AND_PINNING_ARGS",
+    }),
+    RayStateResource.ACTORS: frozenset({
+        "DEPENDENCIES_UNREADY", "PENDING_CREATION", "ALIVE", "RESTARTING",
+    }),
+    RayStateResource.PLACEMENT_GROUPS: frozenset({
+        "PENDING", "PREPARED", "CREATED", "RESCHEDULING",
+    }),
+}
+_STATE_FIELD = {
+    RayStateResource.JOBS: "status",
+    RayStateResource.TASKS: "state",
+    RayStateResource.ACTORS: "state",
+    RayStateResource.PLACEMENT_GROUPS: "state",
+}
+_EMPTY_STATE_OUTPUTS = frozenset({
+    "No resource in the cluster\n",
+    "No resource in the cluster\r\n",
+})
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    decoded: dict[str, object] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise ValueError(f"duplicate JSON key: {key}")
+        decoded[key] = value
+    return decoded
+
+
+class RayStateCliObserver:
+    """Read and immediately reduce five bounded Ray State CLI results."""
+
+    def __init__(
+        self,
+        executable: str,
+        address: str,
+        process_runner: ProcessRunner,
+        *,
+        clock: object = time.monotonic,
+        timeout_seconds: int = 10,
+        max_output_bytes: int = 65_536,
+        limit: int = 10_000,
+        builder: RayCommandBuilder | None = None,
+    ) -> None:
+        if not callable(getattr(process_runner, "run", None)):
+            raise TypeError("process_runner must provide run()")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        sample = RayStateListSpec(
+            executable, RayStateResource.NODES, address,
+            timeout_seconds, limit,
+        )
+        if (
+            isinstance(max_output_bytes, bool)
+            or not isinstance(max_output_bytes, int)
+            or not 1 <= max_output_bytes <= 1_048_576
+        ):
+            raise ValueError("state output bound must be between 1 and 1048576")
+        self._executable = sample.executable
+        self._address = sample.address
+        self._runner = process_runner
+        self._clock = clock
+        self._timeout = sample.timeout_seconds
+        self._max_output = max_output_bytes
+        self._limit = sample.limit
+        self._builder = builder or RayCommandBuilder()
+
+    def _query(
+        self,
+        resource: RayStateResource,
+        cancellation: CancellationToken | None,
+    ) -> tuple[list[dict[str, object]] | None, tuple[str, ...]]:
+        code = resource.value.replace("-", "_")
+        if cancellation is not None and cancellation.cancelled:
+            return None, (f"{code}:cancelled",)
+        command = self._builder.list_state(RayStateListSpec(
+            self._executable, resource, self._address,
+            self._timeout, self._limit,
+        ))
+        request = ProcessRequest(
+            command.arguments,
+            timeout_seconds=float(self._timeout),
+            max_output_bytes=self._max_output,
+        )
+        try:
+            result = self._runner.run(request, cancellation=cancellation)
+        except Exception:
+            return None, (f"{code}:runner_error",)
+        if not isinstance(result, ProcessResult):
+            return None, (f"{code}:invalid_result",)
+        if result.output_invalid_encoding:
+            return None, (f"{code}:invalid_encoding",)
+        if result.cancelled:
+            return None, (f"{code}:cancelled",)
+        if result.timed_out:
+            return None, (f"{code}:timeout",)
+        if result.exit_code != 0:
+            return None, (f"{code}:exit_nonzero",)
+        reasons: list[str] = []
+        if result.output_truncated:
+            reasons.append(f"{code}:output_truncated")
+        if result.stderr.strip():
+            reasons.append(f"{code}:warning")
+        if result.stdout in _EMPTY_STATE_OUTPUTS:
+            if reasons:
+                return None, tuple(dict.fromkeys(reasons))
+            return [], ()
+        try:
+            decoded = json.loads(
+                result.stdout,
+                parse_constant=_reject_json_constant,
+                object_pairs_hook=_reject_duplicate_json_keys,
+            )
+        except (TypeError, ValueError):
+            return None, tuple(reasons + [f"{code}:malformed_json"])
+        if not isinstance(decoded, list) or any(
+            not isinstance(item, dict) for item in decoded
+        ):
+            return None, tuple(reasons + [f"{code}:invalid_schema"])
+        entries = decoded
+        if len(entries) >= self._limit:
+            reasons.append(f"{code}:limit_reached")
+        return entries, tuple(dict.fromkeys(reasons))
+
+    @staticmethod
+    def _same_address(left: str, right: str) -> bool:
+        try:
+            return ipaddress.ip_address(left) == ipaddress.ip_address(right)
+        except ValueError:
+            return left.casefold() == right.casefold()
+
+    def _members(
+        self,
+        nodes: tuple[Node, ...],
+        expected_head_id: str,
+        entries: list[dict[str, object]] | None,
+        reasons: tuple[str, ...],
+        observed_at: float,
+    ) -> tuple[tuple[ClusterMember, ...], tuple[str, ...]]:
+        topology_reasons = list(reasons)
+        matches: dict[str, list[dict[str, object]]] = {
+            node.node_id: [] for node in nodes
+        }
+        live_ids: set[str] = set()
+        duplicate_live_ids: set[str] = set()
+        if entries is not None:
+            for entry in entries:
+                state = entry.get("state")
+                ray_node_id = entry.get("node_id")
+                node_name = entry.get("node_name")
+                node_ip = entry.get("node_ip")
+                is_head = entry.get("is_head_node")
+                if (
+                    state not in ("ALIVE", "DEAD")
+                    or not isinstance(ray_node_id, str)
+                    or not ray_node_id
+                    or not isinstance(node_name, str)
+                    or not isinstance(node_ip, str)
+                    or type(is_head) is not bool
+                ):
+                    topology_reasons.append("nodes:invalid_schema")
+                    continue
+                if state == "DEAD":
+                    continue
+                if ray_node_id in live_ids:
+                    duplicate_live_ids.add(ray_node_id)
+                live_ids.add(ray_node_id)
+                candidates = [
+                    node for node in nodes
+                    if node.node_id == node_name
+                    or self._same_address(node.address, node_ip)
+                ]
+                if len(candidates) != 1:
+                    topology_reasons.append(
+                        "nodes:unexpected_alive" if not candidates
+                        else "nodes:ambiguous_identity"
+                    )
+                    continue
+                matches[candidates[0].node_id].append(entry)
+        members: list[ClusterMember] = []
+        for node in nodes:
+            alive = matches[node.node_id]
+            valid = len(alive) == 1
+            if len(alive) > 1:
+                topology_reasons.append("nodes:duplicate_alive")
+            if not alive:
+                topology_reasons.append(
+                    "nodes:missing_head"
+                    if node.node_id == expected_head_id
+                    else "nodes:missing_member"
+                )
+            if valid:
+                if alive[0]["node_id"] in duplicate_live_ids:
+                    valid = False
+                    topology_reasons.append("nodes:duplicate_ray_id")
+            if valid:
+                expected_flag = node.node_id == expected_head_id
+                if alive[0]["is_head_node"] is not expected_flag:
+                    valid = False
+                    topology_reasons.append("nodes:head_mismatch")
+            members.append(ClusterMember(
+                node,
+                ClusterMemberState.ALIVE if valid else ClusterMemberState.UNKNOWN,
+                observed_at,
+            ))
+        return tuple(members), tuple(dict.fromkeys(topology_reasons))
+
+    def _active_count(
+        self,
+        resource: RayStateResource,
+        entries: list[dict[str, object]] | None,
+        reasons: tuple[str, ...],
+    ) -> tuple[int | None, tuple[str, ...]]:
+        if entries is None:
+            return None, reasons
+        updated = list(reasons)
+        field = _STATE_FIELD[resource]
+        for entry in entries:
+            state = entry.get(field)
+            if not isinstance(state, str) or state not in _KNOWN_ACTIVE_STATES[resource]:
+                updated.append(
+                    f"{resource.value.replace('-', '_')}:unknown_state"
+                )
+        if len(updated) != len(reasons):
+            return None, tuple(dict.fromkeys(updated))
+        return len(entries), reasons
+
+    def observe(
+        self,
+        nodes: tuple[Node, ...],
+        *,
+        expected_head_id: str,
+        epoch: int,
+        cancellation: CancellationToken | None = None,
+    ) -> ClusterSnapshot:
+        _valid_epoch(epoch)
+        if (
+            not isinstance(nodes, tuple)
+            or not 1 <= len(nodes) <= MAX_OBSERVED_NODES
+            or any(not isinstance(node, Node) or not node.enabled for node in nodes)
+        ):
+            raise ValueError("observer nodes must be 1 to 32 enabled Node values")
+        if expected_head_id not in {node.node_id for node in nodes}:
+            raise ValueError("expected head must be an observed node")
+        observed_at = float(self._clock())
+        results: dict[RayStateResource, tuple[list[dict[str, object]] | None,
+                                                   tuple[str, ...]]] = {}
+        resources = (
+            RayStateResource.NODES,
+            RayStateResource.JOBS,
+            RayStateResource.TASKS,
+            RayStateResource.ACTORS,
+            RayStateResource.PLACEMENT_GROUPS,
+        )
+        for index, resource in enumerate(resources):
+            results[resource] = self._query(resource, cancellation)
+            if cancellation is not None and cancellation.cancelled:
+                for omitted in resources[index + 1:]:
+                    code = omitted.value.replace("-", "_")
+                    results[omitted] = (None, (f"{code}:cancelled",))
+                break
+        node_entries, node_reasons = results[RayStateResource.NODES]
+        members, topology_reasons = self._members(
+            nodes, expected_head_id, node_entries, node_reasons, observed_at,
+        )
+        counts: list[int | None] = []
+        workload_reasons = list(topology_reasons)
+        for resource in resources[1:]:
+            entries, reasons = results[resource]
+            count, updated = self._active_count(resource, entries, reasons)
+            counts.append(count)
+            workload_reasons.extend(updated)
+        unique_reasons = tuple(dict.fromkeys(workload_reasons))
+        workload = ClusterWorkloadEvidence(
+            observed_at,
+            *counts,
+            complete=not unique_reasons and all(count is not None for count in counts),
+            reasons=unique_reasons,
+        )
+        return ClusterSnapshot(
+            epoch, expected_head_id, members, observed_at, workload,
         )
 
 
@@ -421,6 +771,8 @@ class RayCliAdapter:
                 ActionStatus.FAILED, "ray.runner_error", retryable=True)
         if not isinstance(result, ProcessResult):
             return ActionResult(ActionStatus.FAILED, "ray.invalid_result")
+        if result.output_invalid_encoding:
+            return ActionResult(ActionStatus.FAILED, "ray.invalid_encoding")
         if result.cancelled:
             return ActionResult(
                 ActionStatus.CANCELLED, "ray.cancelled", retryable=True)
@@ -462,6 +814,8 @@ class RayCliAdapter:
                 ActionStatus.FAILED, "ray.runner_error", retryable=True)
         if not isinstance(result, ProcessResult):
             return ActionResult(ActionStatus.FAILED, "ray.invalid_result")
+        if result.output_invalid_encoding:
+            return ActionResult(ActionStatus.FAILED, "ray.invalid_encoding")
         if result.cancelled:
             return ActionResult(
                 ActionStatus.CANCELLED, "ray.cancelled", retryable=True)
@@ -656,5 +1010,6 @@ __all__ = [
     "ManifestSink",
     "RayCliAdapter",
     "RayCliSettings",
+    "RayStateCliObserver",
     "SUPPORTED_RAY_VERSION",
 ]
