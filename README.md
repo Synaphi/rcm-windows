@@ -10,19 +10,15 @@ GitHub prerelease, when published, is an unsigned standalone executable rather
 than an installer. Windows may show an unrecognized-publisher warning. The
 preview is not a signed, stable, supported, or fleet-ready release.
 
-The current preview identity is `2.08.03b` (`v2.08.03b`). Its exact asset
+The current preview identity is `2.08.05a` (`v2.08.05a`). Its exact asset
 name and verified checksum are published with the GitHub prerelease; do not use
 an executable whose name or SHA-256 differs from that release record.
 
-The `v2.08.03b` preview composes the personal-use outbound RDP client described
-below. Older assets, including `v2.08.03a`, do not contain that composed RDP
-flow. Always match the executable, tag, release notes, size, and SHA-256.
-
-The current development branch has moved beyond the published `v2.08.03b`
-bytes. In particular, its setup source includes the original-preserving 1.x
-import described below. That behavior is not present in the `v2.08.03b`
-download and will not be attributed to a packaged build until a new prerelease
-has its own tag, executable, checksum, and lifecycle evidence.
+The `v2.08.05a` preview composes the personal-use outbound RDP client, explicit
+secret-free 1.x settings import, and explicit local Ray 2.55.1 Start/Stop flow
+described below. Historical `v2.08.03b` bytes contain the RDP flow but not the
+later import or local Ray composition. Always match the executable, tag,
+release notes, size, and SHA-256.
 
 ## What the packaged preview currently does
 
@@ -31,17 +27,19 @@ The executable currently provides:
 - a single-instance desktop and tray lifecycle with bounded shutdown;
 - a GUI setup wizard that creates and validates this PC's local configuration;
 - strict, integrity-checked loading of that configuration on later starts;
+- explicit, original-preserving import of supported secret-free 1.x settings;
 - rendering of configured node records and read-only status/help surfaces;
 - a standard-user, outbound-only native Windows Remote Desktop flow; and
+- explicit local Ray 2.55.1 Start/Stop commands after local setup; and
 - an isolated, non-elevated preview identity.
 
-The monitoring, cleanup, Ray, and loopback HTTP implementations are present and
-tested as service modules, but their operational desktop commands are not
-composed into the published `v2.08.03b` preview. The current source now composes
-the two explicit local Ray commands documented below; that change must not be
-attributed to `v2.08.03b` or any existing asset. The Settings surface is
-read-only; use the setup wizard for supported local fields. These limitations
-make this a developer preview, not a stable 1.x replacement.
+The monitoring, cleanup, cluster-state observer, and loopback HTTP
+implementations are present and tested as service modules, but their
+operational desktop commands are not composed into the preview. The two local
+Ray commands are composed only for the PC running RCM; the conservative
+cluster-state observer remains uncomposed. The Settings surface is read-only;
+use the setup wizard for supported local fields. These limitations make this a
+developer preview, not a stable 1.x replacement.
 
 RCM is not a managed-node agent or remote control plane. It does not provide
 remote RCM metrics or commands, fleet orchestration, password distribution,
@@ -91,13 +89,13 @@ Addresses already present in the integrity-wrapped node configuration are
 available as RDP defaults. An address or user name typed only in the RDP window
 is session-only and is not added to `config.json`.
 
-## Local Ray composition in current source
+## Local Ray composition
 
-The current source, unlike the published `v2.08.03b` executable, can perform
-two user-initiated operations: **Start local Ray** and **Stop local Ray**. Setup
-must first explicitly enable Ray, select one absolute local `ray.exe`, and set
-the head address. RCM does not scan the user profile, trust `PATH`, import the
-1.x Ray executable path, download Ray, or invoke another machine.
+The `v2.08.05a` preview can perform two user-initiated operations: **Start local
+Ray** and **Stop local Ray**. Setup must first explicitly enable Ray, select one
+absolute local `ray.exe`, and set the head address. RCM does not scan the user
+profile, trust `PATH`, import the 1.x Ray executable path, download Ray, or
+invoke another machine.
 
 The compatibility pin is Ray `2.55.1` under CPython 3.12 x64. Each operation
 runs `ray.exe --version` first and fails closed on any other result. A local
@@ -162,12 +160,12 @@ free safety.
 
 ## Fast setup on another Windows PC
 
-1. Download `RCM-2.08.03b-windows-x64.exe` from the matching `v2.08.03b`
+1. Download `RCM-2.08.05a-windows-x64.exe` from the matching `v2.08.05a`
    prerelease. Compare its SHA-256 with the value on that release page before
    running it.
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\RCM-2.08.03b-windows-x64.exe).Hash.ToLowerInvariant()
+(Get-FileHash -Algorithm SHA256 .\RCM-2.08.05a-windows-x64.exe).Hash.ToLowerInvariant()
 ```
 
 The printed value must exactly match the SHA-256 published for that asset.
@@ -179,13 +177,12 @@ The printed value must exactly match the SHA-256 published for that asset.
    from PowerShell:
 
 ```powershell
-Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe -ArgumentList '--configure' -Wait
+Start-Process -FilePath .\RCM-2.08.05a-windows-x64.exe -ArgumentList '--configure' -Wait
 ```
 
 4. Enter only this PC's node ID, address or host name, role, optional CPU count,
-   future monitoring preference, and minimized-start preference. Current source
-   also exposes explicit local Ray enablement, local `ray.exe`, and head-address
-   fields; the published `v2.08.03b` executable does not. The monitoring
+   future monitoring preference, minimized-start preference, explicit local Ray
+   enablement, local `ray.exe`, and head-address fields. The monitoring
    preference is stored but its service is not composed. Select **Save**, then
    start the executable normally.
 
@@ -205,8 +202,8 @@ unavailable.
 
 ```powershell
 $env:RCM_PORTABLE = '1'
-Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe -ArgumentList '--configure' -Wait
-Start-Process -FilePath .\RCM-2.08.03b-windows-x64.exe
+Start-Process -FilePath .\RCM-2.08.05a-windows-x64.exe -ArgumentList '--configure' -Wait
+Start-Process -FilePath .\RCM-2.08.05a-windows-x64.exe
 ```
 
 The wizard never accepts a password, token, credential, firewall change, remote
@@ -219,7 +216,7 @@ Windows RDP, open a listener, or contact another PC.
 - Windows 11 x64 as the primary development target
 - Windows 10 x64 on a best-effort basis
 - PowerShell for the documented setup commands
-- optional user-supplied Ray 2.55.1 for current-source local Ray commands;
+- optional user-supplied Ray 2.55.1 for preview and source local Ray commands;
   Windows multi-node operation remains experimental
 
 The source tree does not bundle dependency wheels or the optional
@@ -259,7 +256,7 @@ The local HTTP boundary, when composed in a later preview, must remain on
 
 ### Import an RCM 1.x configuration
 
-The development setup wizard offers **Import from RCM 1.x** only after the user
+The setup wizard offers **Import from RCM 1.x** only after the user
 selects that action. Quit both versions first; the window close button may only
 hide either application in the notification area. The wizard suggests
 `%APPDATA%\RayClusterManager\config.json` but does not scan for or read it in

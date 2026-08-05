@@ -9,7 +9,7 @@
     {
       "id": "nodes",
       "title": "Nodes",
-      "body": "This source validates node records from the local config.json file at startup. The packaged Settings surface is currently read-only. Use Quit from the notification-area tray icon (the window close button only hides RCM), then rerun it with --configure to change supported local fields. The development wizard can explicitly import one selected RCM 1.x config after showing its schema, SHA-256, and value-free field counts. It preserves the 1.x bytes, rejects secret material without echo, does not migrate RDP user names or retired remote authority, and keeps a generation-bound rollback. This import is not part of the published v2.08.03b executable. Keep real topology out of source control."
+      "body": "This source validates node records from the local config.json file at startup. The packaged Settings surface is currently read-only. Use Quit from the notification-area tray icon (the window close button only hides RCM), then rerun it with --configure to change supported local fields. The v2.08.05a wizard can explicitly import one selected RCM 1.x config after showing its schema, SHA-256, and value-free field counts. It preserves the 1.x bytes, rejects secret material without echo, does not migrate RDP user names or retired remote authority, and keeps a generation-bound rollback. Keep real topology out of source control."
     },
     {
       "id": "rdp",
@@ -19,7 +19,7 @@
     {
       "id": "ray",
       "title": "Local Ray",
-      "body": "The current source can start or stop Ray only on this PC after you explicitly enable it and select an absolute local ray.exe in setup. Exactly Ray 2.55.1 under CPython 3.12 x64 is accepted. The selected installation, its Microsoft Visual C++ runtime, and the ray[default] dashboard dependencies must already work locally; RCM does not download or repair them. Start local Ray creates a head for a local head role or joins the configured head for a local worker role with a full per-user local temp path; observers are refused. Stop local Ray invokes only the same configured local executable. RCM does not search PATH, import a 1.x executable path, trust inherited Ray/Python/pip controls, dispatch a remote command, or expose a cluster API. Ray multi-node operation on Windows is experimental; use only disposable non-production machines and stop every node after testing."
+      "body": "The v2.08.05a preview and current source can start or stop Ray only on this PC after you explicitly enable it and select an absolute local ray.exe in setup. Exactly Ray 2.55.1 under CPython 3.12 x64 is accepted. The selected installation, its Microsoft Visual C++ runtime, and the ray[default] dashboard dependencies must already work locally; RCM does not download or repair them. Start local Ray creates a head for a local head role or joins the configured head for a local worker role with a full per-user local temp path; observers are refused. Stop local Ray invokes only the same configured local executable. RCM does not search PATH, import a 1.x executable path, trust inherited Ray/Python/pip controls, dispatch a remote command, or expose a cluster API. Ray multi-node operation on Windows is experimental; use only disposable non-production machines and stop every node after testing."
     },
     {
       "id": "cleanup",
@@ -34,7 +34,7 @@
     {
       "id": "preview-limits",
       "title": "Preview limits",
-      "body": "The published v2.08.03b preview composes personal outbound Remote Desktop but not the newer local Ray source composition. This remains a local desktop preview; it is not a fleet agent or a replacement for an existing 1.x deployment."
+      "body": "The v2.08.05a preview composes personal outbound Remote Desktop, explicit secret-free 1.x settings import, and explicit local Ray 2.55.1 Start/Stop. The cluster-state observer remains uncomposed. This remains a local desktop preview; it is not a fleet agent or a replacement for an existing 1.x deployment."
     }
   ]
 }

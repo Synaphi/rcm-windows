@@ -165,7 +165,7 @@ class PackageBootstrapTests(unittest.TestCase):
                 windows_desktop = importlib.import_module(
                     "rcm.adapters.windows_desktop"
                 )
-            self.assertEqual("2.8.3b1", package.__version__)
+            self.assertEqual("2.8.5a1", package.__version__)
             self.assertTrue(callable(module_entrypoint.main))
             self.assertTrue(callable(ui.fit_scale))
             self.assertTrue(hasattr(desktop, "DesktopLifecycle"))
