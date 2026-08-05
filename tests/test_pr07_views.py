@@ -212,9 +212,17 @@ class ViewTests(unittest.TestCase):
         ray_help = document.section("ray").body
         self.assertIn("Exactly Ray 2.55.1", ray_help)
         self.assertIn("does not search PATH", ray_help)
+        preview_help = document.section("preview-limits").body
         self.assertIn(
-            "published v2.08.03b preview composes personal outbound Remote Desktop",
-            document.section("preview-limits").body,
+            "v2.08.05a preview composes personal outbound Remote Desktop",
+            preview_help,
+        )
+        self.assertIn("explicit secret-free 1.x settings import", preview_help)
+        self.assertIn("explicit local Ray 2.55.1 Start/Stop", preview_help)
+        self.assertIn("cluster-state observer remains uncomposed", preview_help)
+        self.assertIn(
+            "not a fleet agent or a replacement for an existing 1.x deployment",
+            preview_help,
         )
 
     def test_help_parser_rejects_duplicate_and_extra_shapes(self) -> None:
